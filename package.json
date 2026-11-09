@@ -1,0 +1,10 @@
+{
+  "name": "terreng3d",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Kart → fargelagt 3D-modell (3MF) for FDM-printing",
+  "scripts": {
+    "start": "node serve.cjs"
+  }
+}

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terreng3D</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js"
+  }
+}
+</script>
+</head>
+<body>
+<aside id="panel">
+  <header>
+    <h1>Terreng3D</h1>
+    <p class="sub">Kart → fargelagt 3D-modell (3MF) for FDM-printing</p>
+  </header>
+
+  <section>
+    <h2>1. Område</h2>
+    <form id="searchForm" class="row">
+      <input id="searchInput" type="search" placeholder="Søk etter sted …">
+      <button type="submit">Søk</button>
+    </form>
+    <div class="row">
+      <button id="drawBtn" type="button" title="Klikk og dra i kartet">Tegn område</button>
+      <button id="viewBtn" type="button" title="Bruk det du ser i kartet">Bruk kartutsnittet</button>
+    </div>
+    <p class="hint">Dra i de oransje hjørnene for å justere.</p>
+  </section>
+
+  <section>
+    <h2>2. Modell</h2>
+    <label>Høydedata<select id="elevSrc"></select></label>
+    <div class="grid2">
+      <label>Total bredde (mm)<input id="widthMm" type="number" min="20" max="5000" step="10" value="200"></label>
+      <label>Maks flisstørrelse (mm)<input id="maxTile" type="number" min="50" max="400" step="5" value="300"></label>
+      <label>Oppløsning (mm/punkt)<input id="res" type="number" min="0.2" max="2" step="0.05" value="0.4"></label>
+      <label>Høydeoverdrivelse (×)<input id="exag" type="number" min="0.5" max="10" step="0.1" value="1.5"></label>
+      <label>Sokkel (mm)<input id="base" type="number" min="0.6" max="30" step="0.2" value="3"></label>
+      <label>Havtrinn (mm)<input id="seaStep" type="number" min="0" max="5" step="0.2" value="0.6"></label>
+    </div>
+    <label class="check"><input id="flatSea" type="checkbox" checked> Flatt hav (høyde under 0 m kuttes)</label>
+    <p class="hint">H2D: byggevolum ca. 325 × 320 × 325 mm. 300 mm fliser gir litt margin.</p>
+    <div id="layoutInfo" class="info"></div>
+  </section>
+
+  <section>
+    <h2>3. Farger</h2>
+    <label>Fargekilde<select id="colorSrc"></select></label>
+    <div id="osmOpts">
+      <div id="osmClasses" class="classes"></div>
+      <label class="check"><input id="seaWater" type="checkbox" checked> Høyde ≤ 0 m regnes som hav</label>
+    </div>
+    <div id="rasterOpts" hidden>
+      <label>Antall farger (filamenter)<input id="nColors" type="number" min="2" max="16" value="6"></label>
+    </div>
+    <label>Støyfjerning (passeringer)<input id="smooth" type="number" min="0" max="6" value="0"></label>
+  </section>
+
+  <section>
+    <h2>4. Symboler (fra OpenStreetMap)</h2>
+    <label class="check"><input id="symTrees" type="checkbox"> Trær i skog</label>
+    <div class="grid2" id="treeOpts">
+      <label>Avstand (mm)<input id="treeSpacing" type="number" min="1" max="20" step="0.5" value="3"></label>
+      <label>Høyde (mm)<input id="treeHeight" type="number" min="1" max="15" step="0.5" value="3"></label>
+      <label>Diameter (mm)<input id="treeDiam" type="number" min="0.8" max="8" step="0.1" value="1.8"></label>
+      <label>Tetthet (0–1)<input id="treeFill" type="number" min="0.05" max="1" step="0.05" value="0.6"></label>
+    </div>
+    <label class="check"><input id="symBuildings" type="checkbox"> Bygninger</label>
+    <div class="grid2" id="bldOpts">
+      <label>Minste størrelse (mm)<input id="bldMin" type="number" min="0.8" max="10" step="0.1" value="1.6"></label>
+      <label>Minste høyde (mm)<input id="bldMinH" type="number" min="0.4" max="10" step="0.2" value="1.2"></label>
+    </div>
+    <p class="hint">Symbolene blir egne deler med eget filament. Små bygninger forstørres til minstestørrelsen og tynnes ut der det er tett.</p>
+  </section>
+
+  <section>
+    <button id="genBtn" class="primary" type="button">Generer modell</button>
+    <progress id="progress" value="0" max="1" hidden></progress>
+    <p id="status" class="status"></p>
+  </section>
+
+  <section id="resultSec" hidden>
+    <h2>5. Filamenter</h2>
+    <p class="hint">Hver farge får en filamentplass (AMS-spor). Gi flere farger samme plass for å slå dem sammen. Plass 1 brukes også på sider og bunn.</p>
+    <div id="palette"></div>
+    <h2>6. Eksport (3MF)</h2>
+    <label>Filformat<select id="format">
+      <option value="bambu">Bambu Studio-prosjekt (H2D 0.4, med filamenter)</option>
+      <option value="generic">Generisk 3MF (PrusaSlicer, OrcaSlicer m.fl.)</option>
+    </select></label>
+    <div id="exports"></div>
+    <p class="hint">Bambu-prosjektet åpnes med Fil → Åpne prosjekt. Filamentene får fargene fra listen over; bytt til dine egne filamenter i Bambu Studio før printing.</p>
+  </section>
+
+  <footer id="credits"></footer>
+</aside>
+
+<main>
+  <nav class="tabs">
+    <button id="tabMap" class="tab active" type="button">Kart</button>
+    <button id="tab3d" class="tab" type="button" disabled>3D-forhåndsvisning</button>
+    <span id="staleNote" class="stale" hidden>Innstillingene er endret – generer på nytt</span>
+  </nav>
+  <div id="map" class="view"></div>
+  <div id="preview" class="view" hidden></div>
+</main>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

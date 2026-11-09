@@ -1,0 +1,96 @@
+:root {
+  --bg: #f6f6f4;
+  --panel: #ffffff;
+  --text: #1d2125;
+  --muted: #646b73;
+  --line: #dfe1e3;
+  --accent: #e4572e;
+  --accent-text: #ffffff;
+  --input: #ffffff;
+  --info: #f1f3f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15181b;
+    --panel: #1d2125;
+    --text: #e8eaec;
+    --muted: #9aa2ab;
+    --line: #33393f;
+    --input: #262b30;
+    --info: #262b30;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  display: flex;
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+#panel {
+  width: 360px;
+  flex: 0 0 360px;
+  overflow-y: auto;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 14px 16px 24px;
+}
+header h1 { margin: 0; font-size: 20px; }
+.sub { margin: 2px 0 8px; color: var(--muted); }
+section { border-top: 1px solid var(--line); padding: 12px 0; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
+label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+label input, label select { display: block; width: 100%; margin-top: 3px; }
+label.check { display: flex; gap: 6px; align-items: center; color: var(--text); font-size: 13px; }
+label.check input { width: auto; margin: 0; }
+input, select, button {
+  font: inherit;
+  color: var(--text);
+  background: var(--input);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+button { cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.primary { width: 100%; background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; padding: 10px; }
+.row { display: flex; gap: 6px; margin-bottom: 8px; }
+.row input { flex: 1; min-width: 0; }
+.row button { flex: 1; }
+form.row button { flex: 0 0 auto; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.hint { font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
+.info { background: var(--info); border-radius: 6px; padding: 8px 10px; font-size: 12px; }
+.info div { margin: 1px 0; }
+.info .warn { color: var(--accent); font-weight: 600; }
+.classes { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; margin-bottom: 8px; }
+.classes label { margin: 0; }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,.25); }
+progress { width: 100%; margin-top: 10px; }
+.status { font-size: 12px; color: var(--muted); min-height: 1.4em; margin: 6px 0 0; white-space: pre-line; }
+.status.error { color: var(--accent); }
+.pal-row { display: grid; grid-template-columns: 34px 1fr 52px 64px; gap: 6px; align-items: center; margin-bottom: 4px; font-size: 13px; }
+.pal-row input[type=color] { width: 34px; height: 28px; padding: 1px; }
+.pal-row .pct { color: var(--muted); text-align: right; font-size: 12px; }
+.pal-row select { padding: 4px; }
+#exports { display: flex; flex-direction: column; gap: 6px; }
+#exports button { text-align: left; }
+footer { font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 10px; }
+main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.tabs { display: flex; gap: 6px; align-items: center; padding: 6px 8px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.stale { color: var(--accent); font-size: 12px; margin-left: 8px; }
+.view { flex: 1; min-height: 0; }
+.view[hidden] { display: none; }
+#preview { position: relative; background: #1f2328; }
+#preview canvas { display: block; }
+#map.drawing, #map.drawing .leaflet-interactive { cursor: crosshair; }
+.handle { background: var(--accent); border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 3px rgba(0,0,0,.5); }
+.tile-label { color: #fff; font-weight: 700; font-size: 12px; text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; }
+@media (max-width: 760px) {
+  body { flex-direction: column-reverse; }
+  #panel { width: 100%; flex: 1 1 auto; border-right: 0; border-top: 1px solid var(--line); }
+  main { flex: 0 0 55vh; }
+}
