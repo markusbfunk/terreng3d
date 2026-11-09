@@ -1,5 +1,7 @@
 # Terreng3D
 
+**Bruk programmet her: https://markusbfunk.github.io/terreng3d/**
+
 Nettleserprogram som lager fargelagte 3D-modeller av terreng hvor som helst i verden, klare for
 FDM-printing med flere filamenter (laget for Bambu Lab H2D med AMS). Det trengs ingen installasjon: alt
 kjører i nettleseren, og siden kan legges ut på GitHub Pages.
