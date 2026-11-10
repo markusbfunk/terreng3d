@@ -98,6 +98,14 @@ export async function fetchMosaic(tpl, z, lay, kind, onProgress) {
 }
 
 export class Mosaic {
+  // Dekning (alfa 0–1) i nærmeste piksel. Manglende fliser gir 0.
+  alpha(x, y) {
+    const [gx, gy] = this._px(x, y);
+    const ix = Math.round(gx), iy = Math.round(gy);
+    const t = this.tiles[(iy >> 8) * this.cols + (ix >> 8)];
+    return t ? t[((iy & 255) * TS + (ix & 255)) * 4 + 3] / 255 : 0;
+  }
+
   constructor(z, tx0, ty0, cols, rows, tiles, kind) {
     Object.assign(this, { z, tx0, ty0, cols, rows, tiles, kind });
     this.n = 2 ** z;
@@ -128,7 +136,7 @@ export class Mosaic {
     return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
   }
 
-  // Bilineær RGB inn i out[o..o+2]. Manglende fliser gir hvitt.
+  // Bilineær RGB inn i out[o..o+2]. Gjennomsiktige piksler og manglende fliser gir hvitt.
   rgb(x, y, out, o) {
     const [gx, gy] = this._px(x, y);
     const ix = Math.floor(gx), iy = Math.floor(gy);
@@ -136,7 +144,9 @@ export class Mosaic {
     for (let ch = 0; ch < 3; ch++) {
       const v = (px, py) => {
         const t = this.tiles[(py >> 8) * this.cols + (px >> 8)];
-        return t ? t[((py & 255) * TS + (px & 255)) * 4 + ch] : 255;
+        if (!t) return 255;
+        const k = ((py & 255) * TS + (px & 255)) * 4, a = t[k + 3] / 255;
+        return t[k + ch] * a + 255 * (1 - a);
       };
       const val =
         (v(ix, iy) * (1 - fx) + v(ix + 1, iy) * fx) * (1 - fy) +

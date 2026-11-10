@@ -97,3 +97,13 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   #panel { width: 100%; flex: 1 1 auto; border-right: 0; border-top: 1px solid var(--line); }
   main { flex: 0 0 55vh; }
 }
+
+#rotOut { color: var(--text); font-weight: 600; }
+.rotrow { display: flex; gap: 8px; align-items: center; margin-top: 3px; }
+.rotrow input[type=range] { flex: 1; margin: 0; accent-color: var(--accent); }
+.rotrow input[type=number] { width: 64px; flex: none; margin: 0; }
+.tip { position: fixed; z-index: 10000; max-width: 280px; padding: 8px 10px; border-radius: 6px; background: #1d232b; color: #f2f4f6;
+  font-size: 12.5px; line-height: 1.45; box-shadow: 0 4px 14px rgba(0,0,0,.35); pointer-events: none; opacity: 0; transition: opacity .12s; }
+.tip.show { opacity: 1; }
+[data-tip] { cursor: help; }
+label[data-tip] input, label[data-tip] select { cursor: auto; }

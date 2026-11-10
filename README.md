@@ -19,8 +19,8 @@ Det valgte utsnittet lagres i nettadressen (`#c=lat,lon&s=bredde_m,høyde_m&r=gr
 
 ## Slik fungerer det
 
-1. **Område:** Velg et utsnitt i kartet og dra i håndtakene for å flytte, endre størrelse eller rotere det.
-   Formen kan være rektangel, kvadrat, trekant, femkant, sekskant, åttekant eller sirkel. Utsnittet deles
+1. **Område:** Velg et utsnitt i kartet og dra i håndtakene for å flytte, endre størrelse eller rotere det
+   (rotasjon også med slider). Hold musa over en innstilling for en forklaring. Formen kan være rektangel, kvadrat, trekant, femkant, sekskant, åttekant eller sirkel. Utsnittet deles
    automatisk i fliser som ikke er større enn «Maks flisstørrelse» (300 mm passer H2D), og flisene klippes
    etter formen.
 2. **Høydedata:**
@@ -29,8 +29,9 @@ Det valgte utsnittet lagres i nettadressen (`#c=lat,lon&s=bredde_m,høyde_m&r=gr
    - *AWS Terrain Tiles*: global dekning med cirka 10–30 m oppløsning.
 3. **Farger** (velg én kilde):
    - *Kartverket arealdekke uten tekst* (standard, kun Norge): hentes fra Kartverkets WMS med bare
-     arealdekke, vann, elver, bygninger og eventuelt veier, slik at stedsnavn, høydekurver og skyggelegging
-     ikke havner i modellen. Utenfor Norge byttes det automatisk til OpenTopoMap.
+     arealdekke, vann, elver og bygninger, slik at stedsnavn, høydekurver og skyggelegging ikke havner i
+     modellen. All bebyggelse (by, tettsted, industri, næring) får én felles farge, og veier kan legges på
+     som én mørkegrå farge. Utenfor Norge byttes det automatisk til OpenTopoMap.
    - *Kartverket topo* (kun Norge) eller *OpenTopoMap* (global), begge med tekst: fargene i kartet
      reduseres med k-means (CIELAB) til N filamentfarger.
    - *Sentinel-2* (satellitt, 10 m): fargene reduseres på samme måte. Lisensen er CC BY-NC-SA, altså kun
@@ -41,7 +42,10 @@ Det valgte utsnittet lagres i nettadressen (`#c=lat,lon&s=bredde_m,høyde_m&r=gr
    kan printes, og tynnes ut der det er tett.
 5. **Mesh:** Hver flis blir en lukket (vanntett) modell. Alle flisene bruker samme høydeskala og samme
    bunnivå, slik at de passer sammen.
-6. **3MF-eksport:**
+6. **Tekst i undersiden:** stedsnavn (nærmeste by/tettsted eller kommune, via Nominatim), koordinatene til
+   midtpunktet og flisnavnet graveres 0,6 mm inn i bunnen, speilvendt slik at det leses riktig når modellen
+   snus. Navnet kan endres.
+7. **3MF-eksport:**
    - *Bambu Studio-prosjekt (H2D 0.4)*: filamenter i kartfargene, malte flater og én byggeplate per flis.
      Åpnes med Fil → Åpne prosjekt.
    - *Generisk 3MF*: `paint_color` / `slic3rpe:mmu_segmentation` for PrusaSlicer, OrcaSlicer og
@@ -63,10 +67,13 @@ Det valgte utsnittet lagres i nettadressen (`#c=lat,lon&s=bredde_m,høyde_m&r=gr
 | `js/export3mf.js` | 3MF-skriver (Bambu-prosjekt og generisk) |
 | `js/bambu_h2d_settings.json` | H2D-prosjektinnstillinger (fra Bambu Studios systemprofiler) |
 | `js/preview.js` | 3D-forhåndsvisning (three.js) |
+| `js/label.js` | Stedsnavn og bokstavkonturer for tekst i bunnen |
+| `js/tips.js` | Forklarende tooltips på innstillingene |
 | `js/main.js` | Grensesnitt og arbeidsflyt |
 
 ## Kilder og lisenser
 
+- Stedsnavn: © OpenStreetMap-bidragsytere via Nominatim · Font: Droid Sans (Apache 2.0)
 - Høydedata: © Kartverket (CC BY 4.0) · AWS Terrain Tiles / Mapzen
 - Kart: © Kartverket · © OpenTopoMap (CC BY-SA) · © OpenStreetMap-bidragsytere (ODbL)
 - Satellitt: Sentinel-2 cloudless by EOX (CC BY-NC-SA 4.0)

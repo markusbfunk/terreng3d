@@ -92,7 +92,8 @@ class Buf {
 // M: { NX, NY, dx, dy, z: Float32Array(NX*NY), cls: Uint8Array((NX-1)*(NY-1)) }
 // cols/rows: punktindekser i det globale rutenettet (rad 0 = nord).
 // poly: konvekst polygon i flisens lokale mm (origo i flisens sørvestre hjørne). Standard: hele flisen.
-export function buildTileMesh(M, cols, rows, poly) {
+// engrave: { shapes: [{ outer, holes }], depth, triangulate } – tekst som graveres inn i bunnen (valgfritt).
+export function buildTileMesh(M, cols, rows, poly, engrave) {
   const { NX, NY, dx, dy, z, cls } = M;
   const cw = NX - 1;
   const w = cols.length, h = rows.length;
@@ -189,16 +190,110 @@ export function buildTileMesh(M, cols, rows, poly) {
   const L = loop.length;
 
   for (let i = 0; i < L; i++) P.push3(P.a[loop[i] * 3], P.a[loop[i] * 3 + 1], 0);
-  let cx = 0, cy = 0;
-  for (const [px, py] of poly) { cx += px; cy += py; }
-  const center = addV(cx / poly.length, cy / poly.length, 0);
-
   for (let i = 0; i < L; i++) {
     const p = loop[i], q = loop[(i + 1) % L];
     const pb = nTop + i, qb = nTop + ((i + 1) % L);
     tri(p, pb, qb, WALL);
     tri(p, qb, q, WALL);
-    tri(center, qb, pb, WALL);
+  }
+  const bottomLoop = Array.from({ length: L }, (_, i) => nTop + i);
+  if (!(engrave && engrave.shapes.length && engraveBottom(P, tri, addV, bottomLoop, engrave))) {
+    let cx = 0, cy = 0;
+    for (const [px, py] of poly) { cx += px; cy += py; }
+    const center = addV(cx / poly.length, cy / poly.length, 0);
+    for (let i = 0; i < L; i++) tri(center, bottomLoop[(i + 1) % L], bottomLoop[i], WALL);
   }
   return { positions: new Float32Array(P.a.subarray(0, P.n)), indices: I.done(), triCls: C.done(), width, height };
+}
+
+// ---------- Gravert tekst i bunnen ----------
+
+const signedArea = (pts) => polyArea(pts);
+const ccw = (pts) => (signedArea(pts) < 0 ? pts.slice().reverse() : pts);
+
+// Bunnflaten (z = 0) trianguleres med bokstavene som hull. Hver bokstav blir et hulrom med tak på z = depth,
+// vegger langs alle konturer og «øyer» (innsiden av o, a, ø …) som bunnflate. Alle flater peker ut av modellen.
+// triangulate(contour, holes) → [[i, j, k], …] med indekser i contour ++ holes (som THREE.ShapeUtils.triangulateShape).
+// Syr sammen to løkker (ytre: konveks rand, indre: konveks boks) sortert etter vinkel rundt c.
+function stitch(outer, inner, xy, c, faceDown) {
+  const ang = (v) => { const [x, y] = xy(v); const a = Math.atan2(y - c[1], x - c[0]); return a < 0 ? a + 2 * Math.PI : a; };
+  const seq = (loop) => {
+    const a = loop.map(ang);
+    let s = 0;
+    for (let i = 1; i < a.length; i++) if (a[i] < a[s]) s = i;
+    const ids = [], an = [];
+    for (let k = 0; k <= loop.length; k++) {
+      const i = (s + k) % loop.length;
+      ids.push(loop[i]);
+      let v = a[i] + (k === loop.length ? 2 * Math.PI : 0);
+      if (k > 0 && k < loop.length && v < an[k - 1]) v += 2 * Math.PI;
+      an.push(v);
+    }
+    return { ids, an };
+  };
+  const O = seq(outer), I = seq(inner);
+  const nO = outer.length, nI = inner.length, faces = [], ids = [];
+  const id = (v) => { ids.push(v); return ids.length - 1; };
+  let i = 0, j = 0;
+  while (i < nO || j < nI) {
+    if (j === nI || (i < nO && O.an[i + 1] <= I.an[j + 1])) { faces.push([id(O.ids[i]), id(O.ids[i + 1]), id(I.ids[j])]); i++; }
+    else { faces.push([id(O.ids[i]), id(I.ids[j + 1]), id(I.ids[j])]); j++; }
+  }
+  faceDown(ids, faces);
+}
+
+function engraveBottom(P, tri, addV, bottomLoop, { shapes, box, depth, triangulate }) {
+  const xy = (v) => [P.a[v * 3], P.a[v * 3 + 1]];
+  // Flate med normal ned (−z): trekanter med negativt areal sett ovenfra.
+  const faceDown = (ids, faces) => {
+    // Degenererte trekanter (kolineære randpunkter) må beholdes for å unngå hull; de får flertallets retning.
+    const crs = faces.map(([i, j, k]) => {
+      const a = xy(ids[i]), b = xy(ids[j]), c = xy(ids[k]);
+      return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    });
+    const major = crs.reduce((s, c) => s + Math.sign(c), 0) < 0 ? -1 : 1;
+    faces.forEach(([i, j, k], n) => {
+      const sg = Math.abs(crs[n]) < 1e-12 ? major : Math.sign(crs[n]);
+      if (sg < 0) tri(ids[i], ids[j], ids[k], WALL);
+      else tri(ids[i], ids[k], ids[j], WALL);
+    });
+  };
+  const v2 = (p) => ({ x: p[0], y: p[1] });
+
+  const rimPts = bottomLoop.map(xy);
+  const glyphs = shapes.map((s) => ({ outer: ccw(s.outer), holes: s.holes.map(ccw) }));
+  // Hver kontur får toppunkter på z = 0 og z = depth.
+  const ring = (pts) => ({ lo: pts.map(([x, y]) => addV(x, y, 0)), hi: pts.map(([x, y]) => addV(x, y, depth)) });
+
+  const outerRings = glyphs.map((g) => ring(g.outer));
+  const holeRings = glyphs.map((g) => g.holes.map(ring));
+
+  // 1) Bunnflate: tekstboks (rektangel) med bokstavhull, og en ring mellom randen og boksen.
+  const [bx0, by0, bx1, by1] = box;
+  const boxIds = [[bx0, by0], [bx1, by0], [bx1, by1], [bx0, by1]].map(([x, y]) => addV(x, y, 0));
+  const bFaces = triangulate(boxIds.map((v) => v2(xy(v))), glyphs.map((g) => g.outer.map(v2)));
+  if (!bFaces.length) return false;
+  faceDown([...boxIds, ...outerRings.flatMap((r) => r.lo)], bFaces);
+  stitch(bottomLoop, boxIds, xy, [(bx0 + bx1) / 2, (by0 + by1) / 2], faceDown);
+
+  glyphs.forEach((g, gi) => {
+    const o = outerRings[gi], hs = holeRings[gi];
+    // 2) Tak i hulrommet (z = depth), normal ned.
+    faceDown([...o.hi, ...hs.flatMap((r) => r.hi)], triangulate(g.outer.map(v2), g.holes.map((h) => h.map(v2))));
+    // 3) Øyer (bokstavenes indre hull) som bunnflate på z = 0.
+    g.holes.forEach((h, hi) => faceDown(hs[hi].lo, triangulate(h.map(v2), [])));
+    // 4) Vegger. Ytterkontur (mot klokka): normal mot venstre (inn i hulrommet). Hull: normal mot høyre.
+    const wall = (r, inward) => {
+      const n = r.lo.length;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        const p0 = r.lo[i], q0 = r.lo[j], p1 = r.hi[i], q1 = r.hi[j];
+        if (inward) { tri(p0, q1, q0, WALL); tri(p0, p1, q1, WALL); }
+        else { tri(p0, q0, q1, WALL); tri(p0, q1, p1, WALL); }
+      }
+    };
+    wall(o, true);
+    hs.forEach((r) => wall(r, false));
+  });
+  return true;
 }

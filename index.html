@@ -34,10 +34,10 @@
       <button id="drawBtn" type="button" title="Klikk og dra i kartet">Tegn område</button>
       <button id="viewBtn" type="button" title="Bruk det du ser i kartet">Bruk kartutsnittet</button>
     </div>
-    <div class="grid2">
-      <label>Form<select id="shape"></select></label>
-      <label>Rotasjon (grader)<input id="rot" type="number" min="-180" max="180" step="1" value="0"></label>
-    </div>
+    <label>Form<select id="shape"></select></label>
+    <label id="rotLabel">Rotasjon <output id="rotOut">0°</output>
+      <span class="rotrow"><input id="rotSlider" type="range" min="-180" max="180" step="1" value="0"><input id="rot" type="number" min="-180" max="180" step="1" value="0"></span>
+    </label>
     <p class="hint">Dra i midtpunktet for å flytte, i hjørnet (firkant) for å endre størrelse og i det hvite håndtaket for å rotere.</p>
   </section>
 
@@ -66,6 +66,7 @@
     </div>
     <div id="rasterOpts" hidden>
       <label>Antall farger (filamenter)<input id="nColors" type="number" min="2" max="16" value="6"></label>
+      <label class="check" id="roadOpt"><input id="roads" type="checkbox" checked> Veier i mørk grå</label>
     </div>
     <label>Støyfjerning (passeringer)<input id="smooth" type="number" min="0" max="6" value="0"></label>
   </section>
@@ -102,8 +103,10 @@
       <option value="bambu">Bambu Studio-prosjekt (H2D 0.4, med filamenter)</option>
       <option value="generic">Generisk 3MF (PrusaSlicer, OrcaSlicer m.fl.)</option>
     </select></label>
+    <label class="check"><input id="labelOn" type="checkbox" checked> Gravér stedsnavn og koordinater i undersiden</label>
+    <label>Stedsnavn<input id="labelName" type="text" placeholder="hentes automatisk"></label>
     <div id="exports"></div>
-    <p class="hint">Bambu-prosjektet åpnes med Fil → Åpne prosjekt. Filamentene får fargene fra listen over; bytt til dine egne filamenter i Bambu Studio før printing.</p>
+    <p class="hint">Teksten speilvendes slik at den leses riktig når modellen snus, og graveres 0,6 mm inn. Bambu-prosjektet åpnes med Fil → Åpne prosjekt. Filamentene får fargene fra listen over; bytt til dine egne filamenter i Bambu Studio før printing.</p>
   </section>
 
   <footer id="credits"></footer>
@@ -120,5 +123,6 @@
 </main>
 
 <script type="module" src="js/main.js"></script>
+<script type="module" src="js/tips.js"></script>
 </body>
 </html>

@@ -9,6 +9,7 @@ import { ELEV_SOURCES, KARTVERKET, sampleElevation } from './elevation.js';
 import { placeTrees, placeBuildings, buildSymbolMesh } from './symbols.js';
 import { build3mf } from './export3mf.js';
 import { Preview } from './preview.js';
+import { loadFont, labelShapes, triangulate, placeName, coordText } from './label.js';
 
 const $ = (id) => document.getElementById(id);
 const num = (id) => parseFloat($(id).value);
@@ -105,6 +106,8 @@ function drawSel(skip) {
   const hp = handlePos(s);
   for (const k of ['move', 'size', 'rot']) if (k !== skip) state.handles[k].setLatLng(hp[k]);
   if (document.activeElement !== $('rot')) $('rot').value = s.rot;
+  if (document.activeElement !== $('rotSlider')) $('rotSlider').value = s.rot;
+  $('rotOut').textContent = s.rot + '°';
   updateOverlay(lay);
 }
 
@@ -134,11 +137,14 @@ window.addEventListener('hashchange', () => {
   if (s) { setSel(s); map.fitBounds(state.outline.getBounds().pad(0.15)); }
 });
 
-$('rot').addEventListener('change', () => {
+// Rotasjon: slider (dra) og tallfelt holdes i takt.
+function setRot(v) {
   if (!state.sel) return;
-  state.sel.rot = num('rot') || 0;
+  state.sel.rot = Math.max(-180, Math.min(180, Math.round(+v || 0)));
   setSel(state.sel);
-});
+}
+$('rotSlider').addEventListener('input', () => setRot($('rotSlider').value));
+$('rot').addEventListener('change', () => setRot(num('rot')));
 $('shape').addEventListener('change', () => { if (state.sel) setSel(state.sel); });
 
 function stopDrawing() {
@@ -302,7 +308,7 @@ function updateOverlay(lay = layout()) {
 }
 
 for (const id of ['widthMm', 'maxTile', 'res']) $(id).addEventListener('input', () => { if (state.sel) drawSel(); markStale(); });
-for (const id of ['colorSrc', 'nColors', 'smooth', 'seaWater', 'elevSrc', 'symTrees', 'symBuildings', 'treeSpacing', 'treeHeight', 'treeDiam', 'treeFill', 'bldMin', 'bldMinH'])
+for (const id of ['colorSrc', 'nColors', 'smooth', 'seaWater', 'elevSrc', 'symTrees', 'symBuildings', 'roads', 'treeSpacing', 'treeHeight', 'treeDiam', 'treeFill', 'bldMin', 'bldMinH'])
   $(id).addEventListener('change', markStale);
 for (const [k, s] of Object.entries(ELEV_SOURCES)) $('elevSrc').add(new Option(s.name, k));
 const syncSymOpts = () => {
@@ -340,6 +346,7 @@ function onSourceChange() {
   const t = COLOR_SOURCES[$('colorSrc').value].type;
   $('osmOpts').hidden = t !== 'osm';
   $('rasterOpts').hidden = t !== 'raster';
+  $('roadOpt').hidden = !COLOR_SOURCES[$('colorSrc').value].roads;
   $('smooth').value = t === 'raster' ? 1 : 0;
   updateCredits();
 }
@@ -371,6 +378,55 @@ function setBusy(b) {
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 // ---------------- Generering ----------------
+const ROAD_COLOR = '#3a3a3a';
+
+// Erstatter kjente kartfarger (± toleranse) med én felles farge, f.eks. alle typer bebyggelse.
+function mergeColors(rgb, rules) {
+  const hex = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
+  const R = rules.map((r) => ({ to: hex(r.to), from: r.from.map(hex) }));
+  for (let o = 0; o < rgb.length; o += 3) {
+    for (const r of R) {
+      if (r.from.some(([a, b, c]) => Math.abs(rgb[o] - a) + Math.abs(rgb[o + 1] - b) + Math.abs(rgb[o + 2] - c) <= 18)) {
+        rgb[o] = r.to[0]; rgb[o + 1] = r.to[1]; rgb[o + 2] = r.to[2];
+        break;
+      }
+    }
+  }
+}
+
+// Fyller inn stedsnavn automatisk (med mindre brukeren har skrevet et eget).
+async function autoLabel(M) {
+  if (!$('labelOn').checked) return;
+  const f = $('labelName');
+  if (f.value && f.value !== f.dataset.auto) return;
+  try {
+    setStatus('Henter stedsnavn …', false, 0.97);
+    const name = await placeName(M.center.lat, M.center.lon);
+    f.value = f.dataset.auto = name;
+  } catch (err) {
+    console.warn(err);
+  }
+}
+
+// Tekst som graveres inn i bunnen av én flis (null hvis av eller ikke plass).
+async function tileEngrave(M, t) {
+  if (!$('labelOn').checked) return null;
+  const depth = Math.min(0.6, (Math.max(0.2, num('base') || 3)) - 0.4);
+  if (depth < 0.2) return null;
+  const font = await loadFont();
+  const lines = [
+    { text: $('labelName').value.trim(), scale: 1 },
+    { text: coordText(M.center.lat, M.center.lon), scale: 0.55 },
+  ];
+  if (M.tiles.length > 1) lines.push({ text: 'Flis ' + t.name, scale: 0.55 });
+  const size = Math.max(4, Math.min(14, 0.09 * Math.min(t.w, t.h)));
+  // Får ikke alt plass, droppes koordinatene først, så flisnavnet.
+  const tries = [lines, lines.filter((_, i) => i !== 1), lines.slice(0, 1)];
+  let res = null;
+  for (const ls of tries) if ((res = labelShapes(font, ls, t.poly, { size, minSize: 3, margin: 2 }))) break;
+  return res ? { shapes: res.shapes, box: res.box, depth, triangulate } : null;
+}
+
 async function generate() {
   const lay = layout();
   if (!lay) return setStatus('Velg et område i kartet først.', true);
@@ -414,7 +470,7 @@ async function generate() {
     }
 
     // 3) Farger
-    let cls, palette, keepFirst = false;
+    let cls, palette, keepFirst = false, roadMask = null;
     if (src.type === 'osm') {
       if (enabled.length) {
         const data = osmData;
@@ -443,7 +499,14 @@ async function generate() {
           const [x, y] = lay.gridXY(i + 0.5, j + 0.5);
           cm.rgb(x, y, rgb, (j * nx + i) * 3);
         }
+      if (src.merge) mergeColors(rgb, src.merge);
       ({ cls, palette } = quantizeColors(rgb, nx * ny, Math.round(num('nColors')) || 6));
+      if (src.roads && $('roads').checked) {
+        const rm = await fetchMosaic(src.roads, zc, lay, 'rgb', (p) => setStatus(`Henter veier (zoom ${zc}) …`, false, 0.85 + p * 0.05));
+        roadMask = new Uint8Array(nx * ny);
+        for (let j = 0; j < ny; j++)
+          for (let i = 0; i < nx; i++) roadMask[j * nx + i] = rm.alpha(...lay.gridXY(i + 0.5, j + 0.5)) > 0.4 ? 1 : 0;
+      }
     } else {
       cls = new Uint8Array(nx * ny);
       palette = [{ name: 'Terreng', color: '#cfc29a' }];
@@ -454,8 +517,14 @@ async function generate() {
       await tick();
       majorityFilter(cls, nx, ny, passes, palette.length);
     }
+    // Veier legges på etter støyfjerningen, så smale veier ikke forsvinner.
+    if (roadMask && roadMask.some((v) => v)) {
+      const ri = palette.length;
+      palette.push({ name: 'Veier', color: ROAD_COLOR, id: 'roads' });
+      for (let i = 0; i < cls.length; i++) if (roadMask[i]) cls[i] = ri;
+    }
     palette = compactPalette(cls, palette, keepFirst);
-    if (src.type === 'raster') palette.forEach((p, i) => (p.name = `Farge ${i + 1}`));
+    if (src.type === 'raster') { let n = 0; palette.forEach((p) => { if (p.id !== 'roads') p.name = `Farge ${++n}`; }); }
 
     const M = { ...lay, elevM, cls, palette, srcKey, z: null, used, symbols: {}, symPalette: [] };
     computeHeights(M);
@@ -485,6 +554,7 @@ async function generate() {
     }
 
     state.model = M;
+    await autoLabel(M);
     updateCredits(used);
     computeHeights(M);
     $('staleNote').hidden = true;
@@ -541,12 +611,13 @@ function tileOffset(M, t, gap) {
   return [t.rect.x0 + t.c * gap, t.rect.y0 + (M.rows - 1 - t.r) * gap];
 }
 
-function tileMesh(M, t, step) {
+function tileMesh(M, t, step, engrave) {
   return buildTileMesh(
     M,
     indexRange(M.colBreaks[t.c], M.colBreaks[t.c + 1], step),
     indexRange(M.rowBreaks[t.r], M.rowBreaks[t.r + 1], step),
     t.poly,
+    engrave,
   );
 }
 
@@ -656,9 +727,11 @@ async function exportTiles(list, filename) {
   try {
     setStatus('Bygger mesh …', false, 0);
     await tick();
-    const objects = list.map((t) => ({
+    const engraves = [];
+    for (const t of list) engraves.push(await tileEngrave(M, t).catch((e) => { console.warn(e); return null; }));
+    const objects = list.map((t, k) => ({
       name: t.name,
-      mesh: tileMesh(M, t, 1),
+      mesh: tileMesh(M, t, 1, engraves[k]),
       offset: list.length > 1 ? tileOffset(M, t, 10) : [0, 0],
       parts: symbolParts(M, t),
     }));
