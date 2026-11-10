@@ -4,7 +4,14 @@ const TS = 256;
 const cache = new Map();
 let scratch = null;
 
+const HALF = 20037508.342789244; // halv omkrets i EPSG:3857-meter
+
 function tileUrl(tpl, z, x, y) {
+  if (tpl.includes('{bbox3857}')) {
+    const size = (2 * HALF) / 2 ** z;
+    const bbox = [-HALF + x * size, HALF - (y + 1) * size, -HALF + (x + 1) * size, HALF - y * size].map((v) => v.toFixed(2)).join(',');
+    return tpl.replace('{bbox3857}', bbox);
+  }
   return tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
 }
 

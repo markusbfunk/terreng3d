@@ -115,17 +115,19 @@ export function rasterizeOsm(data, lay, classes, nx, ny) {
   canvas.height = ny;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const cls = new Uint8Array(nx * ny);
-  const sx = nx / (lay.x2 - lay.x1), sy = ny / (lay.y2 - lay.y1);
-  const px = (p) => (lonToX(p.lon) - lay.x1) * sx;
-  const py = (p) => (latToY(p.lat) - lay.y1) * sy;
+  // Celle (i, j) dekker x ∈ [i·dx, (i+1)·dx] og y ∈ [H − (j+1)·dy, H − j·dy] i modell-mm.
+  const toCell = (p) => {
+    const [xm, ym] = lay.toMM(lonToX(p.lon), latToY(p.lat));
+    return [xm / lay.dx, (lay.H - ym) / lay.dy];
+  };
   const cellsPerM = nx / lay.widthM;
   const elements = data.elements || [];
 
   const path = (pts, close) => {
     pts = pts.filter(Boolean);
     if (pts.length < 2) return;
-    ctx.moveTo(px(pts[0]), py(pts[0]));
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(px(pts[i]), py(pts[i]));
+    ctx.moveTo(...toCell(pts[0]));
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(...toCell(pts[i]));
     if (close) ctx.closePath();
   };
 

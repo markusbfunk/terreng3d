@@ -14,15 +14,32 @@ export const COLOR_SOURCES = {
     type: 'osm',
     attribution: 'Arealtyper: © OpenStreetMap-bidragsytere (ODbL), via Overpass API',
   },
-  topo_no: {
-    name: 'Kartverket topografisk kart (kun Norge)',
+  kv_clean: {
+    name: 'Kartverket arealdekke uten tekst (kun Norge)',
     type: 'raster',
+    norwayOnly: true,
+    url: 'https://wms.geonorge.no/skwms1/wms.topo?service=WMS&version=1.3.0&request=GetMap&styles=&crs=EPSG:3857&width=256&height=256&format=image/png&bbox={bbox3857}&layers=kd_arealdekkeflate,fkb_arealdekke,kd_vannflate,fkb_vann,kd_elver,kd_bygninger,fkb_bygning',
+    maxZoom: 18,
+    attribution: 'Kart: © Kartverket (CC BY 4.0)',
+  },
+  kv_clean_roads: {
+    name: 'Kartverket arealdekke uten tekst, med veier (kun Norge)',
+    type: 'raster',
+    norwayOnly: true,
+    url: 'https://wms.geonorge.no/skwms1/wms.topo?service=WMS&version=1.3.0&request=GetMap&styles=&crs=EPSG:3857&width=256&height=256&format=image/png&bbox={bbox3857}&layers=kd_arealdekkeflate,fkb_arealdekke,kd_vannflate,fkb_vann,kd_elver,kd_veger,kd_bygninger,fkb_bygning',
+    maxZoom: 18,
+    attribution: 'Kart: © Kartverket (CC BY 4.0)',
+  },
+  topo_no: {
+    name: 'Kartverket topografisk kart, med tekst (kun Norge)',
+    type: 'raster',
+    norwayOnly: true,
     url: 'https://cache.kartverket.no/v1/wmts/1.0.0/topo/default/webmercator/{z}/{y}/{x}.png',
     maxZoom: 18,
     attribution: 'Kart: © Kartverket (CC BY 4.0)',
   },
   opentopomap: {
-    name: 'OpenTopoMap (global)',
+    name: 'OpenTopoMap (global, med tekst)',
     type: 'raster',
     url: 'https://tile.opentopomap.org/{z}/{x}/{y}.png',
     maxZoom: 17,
@@ -38,6 +55,15 @@ export const COLOR_SOURCES = {
   },
   none: { name: 'Ingen (én farge)', type: 'none', attribution: '' },
 };
+
+// Grov test: overlapper området Norge (fastland + kyst)? Kartverket-kartene er blanke utenfor.
+const NORWAY = [
+  { s: 57.8, n: 59.3, w: 4.4, e: 11.9 },
+  { s: 59.3, n: 64.0, w: 4.4, e: 12.9 },
+  { s: 64.0, n: 68.5, w: 9.5, e: 18.2 },
+  { s: 68.5, n: 71.4, w: 14.5, e: 31.3 },
+];
+export const inNorway = (b) => NORWAY.some((c) => b.w < c.e && b.e > c.w && b.s < c.n && b.n > c.s);
 
 export const BASEMAPS = [
   {

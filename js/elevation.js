@@ -89,8 +89,6 @@ export async function sampleElevation(lay, srcKey, setStatus) {
   const sampleM = lay.dx / lay.scaleMmPerM;
   const elevM = new Float32Array(NX * NY).fill(NaN);
   const used = [];
-  const lonAt = (i) => xToLon(lay.x1 + ((lay.x2 - lay.x1) * i) / (NX - 1));
-  const latAt = (j) => yToLat(lay.y1 + ((lay.y2 - lay.y1) * j) / (NY - 1));
 
   const tryKv = srcKey === 'kartverket' || (srcKey === 'auto' && overlaps(lay.bbox, KARTVERKET.bounds));
   if (tryKv) {
@@ -99,9 +97,9 @@ export async function sampleElevation(lay, srcKey, setStatus) {
       const sample = await kartverketSampler(lay, sampleM, (p) => setStatus('Henter høydedata fra Kartverket …', p * 0.45));
       let hits = 0;
       for (let j = 0; j < NY; j++) {
-        const lat = latAt(j);
         for (let i = 0; i < NX; i++) {
-          const v = sample(lonAt(i), lat);
+          const [x, y] = lay.gridXY(i, j);
+          const v = sample(xToLon(x), yToLat(y));
           elevM[j * NX + i] = v;
           if (!Number.isNaN(v)) hits++;
         }
@@ -121,10 +119,9 @@ export async function sampleElevation(lay, srcKey, setStatus) {
     const msg = `Henter globale høydedata (zoom ${z}) …`;
     const em = await fetchMosaic(ELEVATION.url, z, lay, 'terrarium', (p) => setStatus(msg, 0.45 + p * 0.1));
     for (let j = 0; j < NY; j++) {
-      const y = lay.y1 + ((lay.y2 - lay.y1) * j) / (NY - 1);
       for (let i = 0; i < NX; i++) {
         const k = j * NX + i;
-        if (Number.isNaN(elevM[k])) elevM[k] = em.elevation(lay.x1 + ((lay.x2 - lay.x1) * i) / (NX - 1), y);
+        if (Number.isNaN(elevM[k])) elevM[k] = em.elevation(...lay.gridXY(i, j));
       }
     }
     used.push(ELEVATION.attribution);

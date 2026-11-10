@@ -88,6 +88,9 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #preview canvas { display: block; }
 #map.drawing, #map.drawing .leaflet-interactive { cursor: crosshair; }
 .handle { background: var(--accent); border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 3px rgba(0,0,0,.5); }
+.handle.h-size { border-radius: 3px; }
+.handle.h-rot { background: #fff; border-color: var(--accent); }
+.handle.h-move { cursor: move; }
 .tile-label { color: #fff; font-weight: 700; font-size: 12px; text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; }
 @media (max-width: 760px) {
   body { flex-direction: column-reverse; }

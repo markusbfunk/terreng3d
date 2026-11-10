@@ -1,7 +1,10 @@
 // Bygger en lukket (vanntett) mesh for én flis: toppflate fra høyderutenettet, vegger og flat bunn.
+// Flisen kan være et vilkårlig konvekst polygon (rektangel, sekskant, sirkel …): rutenettet klippes
+// mot polygonet, og veggene følger polygonkanten.
 // Koordinater i mm. x øst, y nord, z opp. Bunnen ligger på z = 0.
 
 export const WALL = 255;
+const EPS = 1e-6;
 
 // Indekser fra a til og med b med gitt steg (b er alltid med).
 export function indexRange(a, b, step) {
@@ -12,67 +15,184 @@ export function indexRange(a, b, step) {
   return out;
 }
 
+// ---------- Polygonhjelpere (konvekse polygoner, mot klokka, [[x,y], …]) ----------
+
+export function polyArea(p) {
+  let a = 0;
+  for (let i = 0; i < p.length; i++) {
+    const [x1, y1] = p[i], [x2, y2] = p[(i + 1) % p.length];
+    a += x1 * y2 - x2 * y1;
+  }
+  return a / 2;
+}
+
+// Kanter som halvplan: f(x,y) = nx*x + ny*y + c ≥ 0 betyr innenfor (avstand i mm).
+export function polyEdges(p) {
+  return p.map(([x1, y1], i) => {
+    const [x2, y2] = p[(i + 1) % p.length];
+    const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+    const nx = -(y2 - y1) / len, ny = (x2 - x1) / len;
+    return { nx, ny, c: -(nx * x1 + ny * y1), x1, y1, ex: (x2 - x1) / len, ey: (y2 - y1) / len, len };
+  });
+}
+
+// Minste avstand innover fra kantene (negativ = utenfor).
+export function insideDist(edges, x, y) {
+  let m = Infinity;
+  for (const e of edges) {
+    const d = e.nx * x + e.ny * y + e.c;
+    if (d < m) m = d;
+  }
+  return m;
+}
+
+// Sutherland–Hodgman: klipp polygon (punkter [x,y,…]) mot konvekst polygon.
+export function clipPoly(subject, clip) {
+  let out = subject;
+  for (const e of polyEdges(clip)) {
+    const inp = out;
+    out = [];
+    if (!inp.length) break;
+    for (let i = 0; i < inp.length; i++) {
+      const a = inp[i], b = inp[(i + 1) % inp.length];
+      const fa = e.nx * a[0] + e.ny * a[1] + e.c, fb = e.nx * b[0] + e.ny * b[1] + e.c;
+      if (fa >= -EPS) out.push(a);
+      if ((fa >= -EPS) !== (fb >= -EPS) && !(fa >= -EPS && Math.abs(fa) <= EPS) && !(fb >= -EPS && Math.abs(fb) <= EPS)) {
+        out.push(lerpPt(a, b, fa, fb));
+      }
+    }
+  }
+  return out;
+}
+
+// Skjæringspunkt beregnet i fast rekkefølge, slik at naboceller får nøyaktig samme punkt.
+function lerpPt(a, b, fa, fb) {
+  if (a[0] > b[0] || (a[0] === b[0] && a[1] > b[1])) { [a, b] = [b, a]; [fa, fb] = [fb, fa]; }
+  const t = Math.min(1, Math.max(0, fa / (fa - fb)));
+  const p = [];
+  for (let k = 0; k < a.length; k++) p.push(k === 3 ? -1 : a[k] + (b[k] - a[k]) * t);
+  return p;
+}
+
+// Voksende typet buffer.
+class Buf {
+  constructor(T, cap) { this.T = T; this.a = new T(Math.max(16, cap)); this.n = 0; }
+  grow(k) {
+    if (this.n + k <= this.a.length) return;
+    const b = new this.T(Math.max(this.a.length * 2, this.n + k));
+    b.set(this.a); this.a = b;
+  }
+  push1(v) { this.grow(1); this.a[this.n++] = v; }
+  push3(x, y, z) { this.grow(3); this.a[this.n++] = x; this.a[this.n++] = y; this.a[this.n++] = z; }
+  done() { return this.a.slice(0, this.n); }
+}
+
+// ---------- Flis-mesh ----------
+
 // M: { NX, NY, dx, dy, z: Float32Array(NX*NY), cls: Uint8Array((NX-1)*(NY-1)) }
 // cols/rows: punktindekser i det globale rutenettet (rad 0 = nord).
-export function buildTileMesh(M, cols, rows) {
+// poly: konvekst polygon i flisens lokale mm (origo i flisens sørvestre hjørne). Standard: hele flisen.
+export function buildTileMesh(M, cols, rows, poly) {
   const { NX, NY, dx, dy, z, cls } = M;
   const cw = NX - 1;
   const w = cols.length, h = rows.length;
-  const nTop = w * h;
-  const L = 2 * (w + h) - 4;
-  const pos = new Float32Array((nTop + L + 1) * 3);
   const x0 = cols[0], yRef = rows[h - 1];
-
-  for (let b = 0; b < h; b++) {
-    const yy = (yRef - rows[b]) * dy;
-    const zr = rows[b] * NX;
-    for (let a = 0; a < w; a++) {
-      const o = (b * w + a) * 3;
-      pos[o] = (cols[a] - x0) * dx;
-      pos[o + 1] = yy;
-      pos[o + 2] = z[zr + cols[a]];
-    }
-  }
-
-  // Omkrets mot klokka sett ovenfra: sør (vest→øst), øst (sør→nord), nord (øst→vest), vest (nord→sør).
-  const loop = new Uint32Array(L);
-  let k = 0;
-  for (let a = 0; a < w; a++) loop[k++] = (h - 1) * w + a;
-  for (let b = h - 2; b >= 0; b--) loop[k++] = b * w + (w - 1);
-  for (let a = w - 2; a >= 0; a--) loop[k++] = a;
-  for (let b = 1; b <= h - 2; b++) loop[k++] = b * w;
-
-  for (let i = 0; i < L; i++) {
-    const v = loop[i] * 3, o = (nTop + i) * 3;
-    pos[o] = pos[v];
-    pos[o + 1] = pos[v + 1];
-    pos[o + 2] = 0;
-  }
-  const center = nTop + L;
   const width = (cols[w - 1] - x0) * dx, height = (yRef - rows[0]) * dy;
-  pos[center * 3] = width / 2;
-  pos[center * 3 + 1] = height / 2;
-  pos[center * 3 + 2] = 0;
+  if (!poly) poly = [[0, 0], [width, 0], [width, height], [0, height]];
+  const edges = polyEdges(poly);
 
-  const nTopTri = 2 * (w - 1) * (h - 1);
-  const nTri = nTopTri + 3 * L;
-  const idx = new Uint32Array(nTri * 3);
-  const tc = new Uint8Array(nTri);
-  let t = 0;
-  const tri = (p, q, r, c) => {
-    idx[t * 3] = p; idx[t * 3 + 1] = q; idx[t * 3 + 2] = r; tc[t] = c; t++;
+  // Hjørnepunkter i flisens lokale mm.
+  const gx = (a) => (cols[a] - x0) * dx;
+  const gy = (b) => (yRef - rows[b]) * dy;
+
+  const P = new Buf(Float64Array, (w * h + 4 * (w + h)) * 3);
+  const gridIdx = new Int32Array(w * h).fill(-1);
+  const keyIdx = new Map();
+  const addV = (x, y, zz) => { P.push3(x, y, zz); return P.n / 3 - 1; };
+  const gv = (a, b) => {
+    const k = b * w + a;
+    if (gridIdx[k] < 0) gridIdx[k] = addV(gx(a), gy(b), z[rows[b] * NX + cols[a]]);
+    return gridIdx[k];
   };
+  // Snapp til polygonhjørner, ellers del punkter på avrundet posisjon.
+  const pv = (p) => {
+    if (p[3] >= 0) return gv(p[3] % w, Math.floor(p[3] / w));
+    let x = p[0], y = p[1];
+    for (const [cx, cy] of poly) if (Math.abs(cx - x) < 1e-5 && Math.abs(cy - y) < 1e-5) { x = cx; y = cy; break; }
+    const key = Math.round(x * 1e4) * 1e9 + Math.round(y * 1e4);
+    let i = keyIdx.get(key);
+    if (i === undefined) { i = addV(x, y, p[2]); keyIdx.set(key, i); }
+    return i;
+  };
+
+  const inside = new Uint8Array(w * h);
+  for (let b = 0; b < h; b++) for (let a = 0; a < w; a++) inside[b * w + a] = insideDist(edges, gx(a), gy(b)) >= -EPS ? 1 : 0;
+
+  const I = new Buf(Uint32Array, 2 * w * h * 3 + 64), C = new Buf(Uint8Array, 2 * w * h + 64);
+  const tri = (p, q, r, c) => { I.push3(p, q, r); C.push1(c); };
+  const corner = (a, b) => [gx(a), gy(b), z[rows[b] * NX + cols[a]], b * w + a];
 
   for (let b = 0; b < h - 1; b++) {
     const cj = Math.min(NY - 2, (rows[b] + rows[b + 1]) >> 1);
     for (let a = 0; a < w - 1; a++) {
       const ci = Math.min(cw - 1, (cols[a] + cols[a + 1]) >> 1);
       const c = cls[cj * cw + ci];
-      const va = b * w + a, vb = va + 1, vc = va + w, vd = vc + 1;
-      tri(vc, vd, vb, c);
-      tri(vc, vb, va, c);
+      const ka = b * w + a, kb = ka + 1, kc = ka + w, kd = kc + 1;
+      const n = inside[ka] + inside[kb] + inside[kc] + inside[kd];
+      if (n === 4) {
+        const va = gv(a, b), vb = gv(a + 1, b), vc = gv(a, b + 1), vd = gv(a + 1, b + 1);
+        tri(vc, vd, vb, c);
+        tri(vc, vb, va, c);
+        continue;
+      }
+      // Helt utenfor én kant → hopp over.
+      const xa = gx(a), xb = gx(a + 1), ya = gy(b), yc = gy(b + 1);
+      let out = false;
+      for (const e of edges) {
+        if (Math.max(e.nx * xa + e.ny * ya, e.nx * xb + e.ny * ya, e.nx * xa + e.ny * yc, e.nx * xb + e.ny * yc) + e.c < -EPS) { out = true; break; }
+      }
+      if (out) continue;
+      const A = corner(a, b), B = corner(a + 1, b), Cc = corner(a, b + 1), D = corner(a + 1, b + 1);
+      for (const t of [[Cc, D, B], [Cc, B, A]]) {
+        const pg = clipPoly(t, poly);
+        if (pg.length < 3 || Math.abs(polyArea(pg)) < 1e-9) continue;
+        const ids = pg.map(pv);
+        for (let k = 1; k < ids.length - 1; k++) {
+          if (ids[0] !== ids[k] && ids[k] !== ids[k + 1] && ids[0] !== ids[k + 1]) tri(ids[0], ids[k], ids[k + 1], c);
+        }
+      }
     }
   }
+
+  // Randpunkter sortert langs omkretsen (mot klokka).
+  const nTop = P.n / 3;
+  const cum = [];
+  let per = 0;
+  for (const e of edges) { cum.push(per); per += e.len; }
+  const used = new Uint8Array(nTop);
+  for (let k = 0; k < I.n; k++) used[I.a[k]] = 1;
+  const rim = [];
+  for (let v = 0; v < nTop; v++) {
+    if (!used[v]) continue;
+    const x = P.a[v * 3], y = P.a[v * 3 + 1];
+    for (let k = 0; k < edges.length; k++) {
+      const e = edges[k];
+      if (Math.abs(e.nx * x + e.ny * y + e.c) > 2e-5) continue;
+      const t = (x - e.x1) * e.ex + (y - e.y1) * e.ey;
+      if (t < -2e-5 || t > e.len + 2e-5) continue;
+      rim.push([cum[k] + Math.max(0, t), v]);
+      break;
+    }
+  }
+  rim.sort((p, q) => p[0] - q[0]);
+  const loop = rim.map((r) => r[1]);
+  const L = loop.length;
+
+  for (let i = 0; i < L; i++) P.push3(P.a[loop[i] * 3], P.a[loop[i] * 3 + 1], 0);
+  let cx = 0, cy = 0;
+  for (const [px, py] of poly) { cx += px; cy += py; }
+  const center = addV(cx / poly.length, cy / poly.length, 0);
+
   for (let i = 0; i < L; i++) {
     const p = loop[i], q = loop[(i + 1) % L];
     const pb = nTop + i, qb = nTop + ((i + 1) % L);
@@ -80,5 +200,5 @@ export function buildTileMesh(M, cols, rows) {
     tri(p, qb, q, WALL);
     tri(center, qb, pb, WALL);
   }
-  return { positions: pos, indices: idx, triCls: tc, width, height };
+  return { positions: new Float32Array(P.a.subarray(0, P.n)), indices: I.done(), triCls: C.done(), width, height };
 }

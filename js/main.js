@@ -1,9 +1,10 @@
 import { lonToX, latToY, xToLon, yToLat, metersPerUnit } from './geo.js';
-import { ELEVATION, COLOR_SOURCES, BASEMAPS } from './sources.js';
+import { ELEVATION, COLOR_SOURCES, BASEMAPS, inNorway } from './sources.js';
 import { chooseZoom, fetchMosaic } from './tiles.js';
 import { quantizeColors, majorityFilter, compactPalette } from './colors.js';
 import { BASE_CLASS, OSM_CLASSES, fetchOsm, rasterizeOsm } from './osm.js';
-import { buildTileMesh, indexRange } from './mesh.js';
+import { buildTileMesh, indexRange, clipPoly, polyArea, polyEdges, insideDist } from './mesh.js';
+import { SHAPES, shapeAspect, shapePoly } from './shapes.js';
 import { ELEV_SOURCES, KARTVERKET, sampleElevation } from './elevation.js';
 import { placeTrees, placeBuildings, buildSymbolMesh } from './symbols.js';
 import { build3mf } from './export3mf.js';
@@ -13,7 +14,7 @@ const $ = (id) => document.getElementById(id);
 const num = (id) => parseFloat($(id).value);
 const MAX_POINTS = 8e6;
 
-const state = { bounds: null, rect: null, handles: [], model: null, drawing: false, drawStart: null, preview: null, busy: false };
+const state = { sel: null, outline: null, handles: null, model: null, drawing: false, drawStart: null, preview: null, busy: false };
 
 // ---------------- Kart ----------------
 const map = L.map('map').setView([62.49, 7.72], 11);
@@ -27,42 +28,118 @@ L.control.layers(baseLayers, null, { position: 'topright' }).addTo(map);
 L.control.scale({ imperial: false }).addTo(map);
 const overlay = L.layerGroup().addTo(map);
 
-function setBounds(b) {
-  state.bounds = b;
-  if (!state.rect) {
-    state.rect = L.rectangle(b, { color: '#e4572e', weight: 2, fillOpacity: 0.06, interactive: false }).addTo(map);
-    const icon = L.divIcon({ className: 'handle', iconSize: [14, 14] });
-    state.handles = [0, 1].map(() => L.marker(b.getCenter(), { draggable: true, icon, zIndexOffset: 1000 }).addTo(map));
-    state.handles.forEach((h) => {
-      h.on('drag', () => {
-        const bb = L.latLngBounds(state.handles[0].getLatLng(), state.handles[1].getLatLng());
-        state.rect.setBounds(bb);
-        state.bounds = bb;
-        updateOverlay();
-      });
-      h.on('dragend', () => setBounds(state.bounds));
-    });
-  }
-  state.rect.setBounds(b);
-  state.handles[0].setLatLng(b.getNorthWest());
-  state.handles[1].setLatLng(b.getSouthEast());
-  updateOverlay();
+for (const [k, s] of Object.entries(SHAPES)) $('shape').add(new Option(s.name, k));
+
+// Utsnittet: senter (lat/lon), størrelse i meter og rotasjon i grader med klokka.
+// For regulære former er høyden låst til formens forhold.
+function normSel(s) {
+  const asp = shapeAspect($('shape').value);
+  s.wM = Math.max(50, s.wM);
+  s.hM = asp ? s.wM * asp : Math.max(50, s.hM);
+  s.rot = ((((s.rot || 0) + 180) % 360) + 360) % 360 - 180;
+  return s;
+}
+
+function selFromBounds(b) {
+  const x1 = lonToX(b.getWest()), x2 = lonToX(b.getEast()), y1 = latToY(b.getNorth()), y2 = latToY(b.getSouth());
+  const c = b.getCenter(), mpu = metersPerUnit(c.lat);
+  let wM = (x2 - x1) * mpu, hM = (y2 - y1) * mpu;
+  const asp = shapeAspect($('shape').value);
+  if (asp) wM = Math.min(wM, hM / asp);
+  return { lat: c.lat, lon: c.lng, wM, hM, rot: 0 };
+}
+
+// Lokale meter (lx langs bredden, ly langs høyden i utsnittets egen retning) relativt til senter.
+function toLocalM(s, latlng) {
+  const mpu = metersPerUnit(s.lat), th = (s.rot * Math.PI) / 180;
+  const east = (lonToX(latlng.lng) - lonToX(s.lon)) * mpu, north = (latToY(s.lat) - latToY(latlng.lat)) * mpu;
+  return [east * Math.cos(th) - north * Math.sin(th), east * Math.sin(th) + north * Math.cos(th)];
+}
+function fromLocalM(s, lx, ly) {
+  const mpu = metersPerUnit(s.lat), th = (s.rot * Math.PI) / 180;
+  const east = lx * Math.cos(th) + ly * Math.sin(th), north = -lx * Math.sin(th) + ly * Math.cos(th);
+  return L.latLng(yToLat(latToY(s.lat) - north / mpu), xToLon(lonToX(s.lon) + east / mpu));
+}
+
+function handlePos(s) {
+  return {
+    move: L.latLng(s.lat, s.lon),
+    size: fromLocalM(s, s.wM / 2, s.hM / 2),
+    rot: fromLocalM(s, 0, s.hM / 2 + Math.max(s.wM, s.hM) * 0.12),
+  };
+}
+
+function ensureHandles() {
+  if (state.handles) return;
+  const mk = (cls, title) =>
+    L.marker([0, 0], { draggable: true, title, icon: L.divIcon({ className: 'handle ' + cls, iconSize: [16, 16] }), zIndexOffset: 1000 }).addTo(map);
+  const h = { move: mk('h-move', 'Dra for å flytte'), size: mk('h-size', 'Dra for å endre størrelse'), rot: mk('h-rot', 'Dra for å rotere') };
+  h.move.on('drag', (e) => { state.sel.lat = e.latlng.lat; state.sel.lon = e.latlng.lng; drawSel('move'); });
+  h.size.on('drag', (e) => {
+    const s = state.sel, [lx, ly] = toLocalM(s, e.latlng);
+    const asp = shapeAspect($('shape').value);
+    s.wM = asp ? Math.max(2 * Math.abs(lx), (2 * Math.abs(ly)) / asp) : 2 * Math.abs(lx);
+    s.hM = 2 * Math.abs(ly);
+    normSel(s);
+    drawSel('size');
+  });
+  h.rot.on('drag', (e) => {
+    const s = state.sel, mpu = metersPerUnit(s.lat);
+    const east = (lonToX(e.latlng.lng) - lonToX(s.lon)) * mpu, north = (latToY(s.lat) - latToY(e.latlng.lat)) * mpu;
+    s.rot = Math.round((Math.atan2(east, north) * 180) / Math.PI);
+    normSel(s);
+    drawSel('rot');
+  });
+  for (const m of Object.values(h)) m.on('dragend', () => setSel(state.sel));
+  state.handles = h;
+}
+
+// Tegner utsnittet uten å endre lenken (brukes også under dra).
+function drawSel(skip) {
+  const s = state.sel;
+  const lay = layout();
+  const ring = lay.poly.map(([x, y]) => lay.toLatLng(x, y));
+  if (!state.outline) state.outline = L.polygon(ring, { color: '#e4572e', weight: 2, fillOpacity: 0.06, interactive: false }).addTo(map);
+  else state.outline.setLatLngs(ring);
+  ensureHandles();
+  const hp = handlePos(s);
+  for (const k of ['move', 'size', 'rot']) if (k !== skip) state.handles[k].setLatLng(hp[k]);
+  if (document.activeElement !== $('rot')) $('rot').value = s.rot;
+  updateOverlay(lay);
+}
+
+function setSel(s) {
+  state.sel = normSel(s);
+  drawSel();
   markStale();
-  // Del området via lenke: #bbox=sør,vest,nord,øst
-  const h = '#bbox=' + [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map((v) => v.toFixed(5)).join(',');
+  // Del utsnittet via lenke.
+  const f = (v, d) => v.toFixed(d);
+  const h = `#c=${f(s.lat, 5)},${f(s.lon, 5)}&s=${f(s.wM, 0)},${f(s.hM, 0)}&r=${s.rot}&f=${$('shape').value}`;
   history.replaceState(null, '', h);
 }
 
-function boundsFromHash() {
-  const m = location.hash.match(/bbox=([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)/);
+function selFromHash() {
+  const hs = location.hash;
+  const shape = hs.match(/[#&]f=(\w+)/);
+  if (shape && SHAPES[shape[1]]) $('shape').value = shape[1];
+  const c = hs.match(/[#&]c=([-\d.]+),([-\d.]+)/), sz = hs.match(/[#&]s=([\d.]+),([\d.]+)/), r = hs.match(/[#&]r=([-\d.]+)/);
+  if (c && sz) return { lat: +c[1], lon: +c[2], wM: +sz[1], hM: +sz[2], rot: r ? +r[1] : 0 };
+  const m = hs.match(/bbox=([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)/);
   if (!m) return null;
-  const [s, w, n, e] = m.slice(1).map(Number);
-  return s < n && w < e ? L.latLngBounds([s, w], [n, e]) : null;
+  const [so, w, n, e] = m.slice(1).map(Number);
+  return so < n && w < e ? selFromBounds(L.latLngBounds([so, w], [n, e])) : null;
 }
 window.addEventListener('hashchange', () => {
-  const b = boundsFromHash();
-  if (b) { setBounds(b); map.fitBounds(b.pad(0.15)); }
+  const s = selFromHash();
+  if (s) { setSel(s); map.fitBounds(state.outline.getBounds().pad(0.15)); }
 });
+
+$('rot').addEventListener('change', () => {
+  if (!state.sel) return;
+  state.sel.rot = num('rot') || 0;
+  setSel(state.sel);
+});
+$('shape').addEventListener('change', () => { if (state.sel) setSel(state.sel); });
 
 function stopDrawing() {
   state.drawing = false;
@@ -82,22 +159,20 @@ $('drawBtn').onclick = () => {
 map.on('mousedown', (e) => { if (state.drawing) state.drawStart = e.latlng; });
 map.on('mousemove', (e) => {
   if (!state.drawing || !state.drawStart) return;
-  const b = L.latLngBounds(state.drawStart, e.latlng);
-  if (!state.rect) setBounds(b);
-  state.rect.setBounds(b);
+  const p1 = map.latLngToContainerPoint(state.drawStart), p2 = map.latLngToContainerPoint(e.latlng);
+  if (Math.abs(p1.x - p2.x) < 8 || Math.abs(p1.y - p2.y) < 8) return;
+  state.sel = normSel(selFromBounds(L.latLngBounds(state.drawStart, e.latlng)));
+  drawSel();
 });
 map.on('mouseup', (e) => {
   if (!state.drawing || !state.drawStart) return;
   const b = L.latLngBounds(state.drawStart, e.latlng);
   stopDrawing();
   const p1 = map.latLngToContainerPoint(b.getNorthWest()), p2 = map.latLngToContainerPoint(b.getSouthEast());
-  if (Math.abs(p1.x - p2.x) < 8 || Math.abs(p1.y - p2.y) < 8) {
-    if (state.bounds) state.rect.setBounds(state.bounds);
-    return;
-  }
-  setBounds(b);
+  if (Math.abs(p1.x - p2.x) < 8 || Math.abs(p1.y - p2.y) < 8) return;
+  setSel(selFromBounds(b));
 });
-$('viewBtn').onclick = () => setBounds(map.getBounds().pad(-0.12));
+$('viewBtn').onclick = () => setSel(selFromBounds(map.getBounds().pad(-0.12)));
 
 $('searchForm').onsubmit = async (e) => {
   e.preventDefault();
@@ -116,58 +191,108 @@ $('searchForm').onsubmit = async (e) => {
 };
 
 // ---------------- Oppsett / fliser ----------------
+// Modellkoordinater: mm, x langs utsnittets bredde (0..W), y langs høyden (0..H, «sør» → «nord»).
+// Rutenettpunkt (i, j) ligger i x = i·dx, y = H − j·dy (rad 0 øverst).
 function layout() {
-  const b = state.bounds;
-  if (!b) return null;
-  const x1 = lonToX(b.getWest()), x2 = lonToX(b.getEast());
-  const y1 = latToY(b.getNorth()), y2 = latToY(b.getSouth());
-  const latc = (b.getNorth() + b.getSouth()) / 2;
-  const mpu = metersPerUnit(latc);
-  const widthM = (x2 - x1) * mpu, heightM = (y2 - y1) * mpu;
+  const s = state.sel;
+  if (!s) return null;
+  const shape = $('shape').value;
+  const wM = s.wM, hM = s.hM;
+  const cx = lonToX(s.lon), cy = latToY(s.lat);
+  const mpu = metersPerUnit(s.lat);
+  const th = (s.rot * Math.PI) / 180, co = Math.cos(th), si = Math.sin(th);
   const W = Math.max(10, num('widthMm') || 200);
-  const H = (W * heightM) / widthM;
+  const H = (W * hM) / wM;
+  const scaleMmPerM = W / wM;
+  const toXY = (xm, ym) => {
+    const lx = xm / scaleMmPerM - wM / 2, ly = ym / scaleMmPerM - hM / 2;
+    return [cx + (lx * co + ly * si) / mpu, cy - (-lx * si + ly * co) / mpu];
+  };
+  const toMM = (x, y) => {
+    const east = (x - cx) * mpu, north = (cy - y) * mpu;
+    return [(east * co - north * si + wM / 2) * scaleMmPerM, (east * si + north * co + hM / 2) * scaleMmPerM];
+  };
+  const toLatLng = (xm, ym) => { const [x, y] = toXY(xm, ym); return L.latLng(yToLat(y), xToLon(x)); };
+
   const maxTile = Math.max(20, num('maxTile') || 300);
   const res = Math.max(0.1, num('res') || 0.4);
   const cols = Math.max(1, Math.ceil(W / maxTile - 1e-9));
   const rows = Math.max(1, Math.ceil(H / maxTile - 1e-9));
   const NX = Math.max(cols + 1, Math.round(W / res) + 1);
   const NY = Math.max(rows + 1, Math.round(H / res) + 1);
+  const dx = W / (NX - 1), dy = H / (NY - 1);
+  const gridXY = (fi, fj) => toXY(fi * dx, H - fj * dy);
   const colBreaks = Array.from({ length: cols + 1 }, (_, k) => Math.round((k * (NX - 1)) / cols));
   const rowBreaks = Array.from({ length: rows + 1 }, (_, k) => Math.round((k * (NY - 1)) / rows));
-  const scaleMmPerM = W / widthM;
+  const poly = shapePoly(shape, W, H);
+
+  // Fliser: rutenettrektangler klippet mot formen (tomme fliser utelates).
+  const tiles = [];
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      const x0 = colBreaks[c] * dx, x1 = colBreaks[c + 1] * dx;
+      const y0 = (NY - 1 - rowBreaks[r + 1]) * dy, y1 = (NY - 1 - rowBreaks[r]) * dy;
+      const gpoly = clipPoly(poly, [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+      if (gpoly.length < 3 || polyArea(gpoly) < 1) continue;
+      const xs = gpoly.map((p) => p[0]), ys = gpoly.map((p) => p[1]);
+      tiles.push({
+        r, c, name: tileName(r, c), rect: { x0, x1, y0, y1 }, gpoly,
+        poly: gpoly.map(([x, y]) => [x - x0, y - y0]),
+        w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys),
+      });
+    }
+
+  const corners = [[0, 0], [W, 0], [W, H], [0, H]].map(([a, b]) => toXY(a, b));
+  const x1 = Math.min(...corners.map((p) => p[0])), x2 = Math.max(...corners.map((p) => p[0]));
+  const y1 = Math.min(...corners.map((p) => p[1])), y2 = Math.max(...corners.map((p) => p[1]));
   return {
-    x1, x2, y1, y2, latc, mpu, widthM, heightM, W, H, cols, rows, NX, NY,
-    dx: W / (NX - 1), dy: H / (NY - 1), colBreaks, rowBreaks, scaleMmPerM,
-    bbox: { s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() },
+    x1, x2, y1, y2, latc: s.lat, mpu, widthM: wM, heightM: hM, W, H, cols, rows, NX, NY,
+    dx, dy, colBreaks, rowBreaks, scaleMmPerM, toXY, toMM, toLatLng, gridXY, poly, tiles, shape, rot: s.rot,
+    center: { lat: s.lat, lon: s.lon },
+    bbox: { s: yToLat(y2), n: yToLat(y1), w: xToLon(x1), e: xToLon(x2) },
   };
 }
 
 const tileName = (r, c) => `R${r + 1}K${c + 1}`;
 
-function updateOverlay() {
+// Klipp et linjestykke mot et konvekst polygon (Cyrus–Beck).
+function clipSeg(a, b, poly) {
+  let t0 = 0, t1 = 1;
+  for (const e of polyEdges(poly)) {
+    const fa = e.nx * a[0] + e.ny * a[1] + e.c, fb = e.nx * b[0] + e.ny * b[1] + e.c;
+    if (fa < 0 && fb < 0) return null;
+    if (fa < 0) t0 = Math.max(t0, fa / (fa - fb));
+    else if (fb < 0) t1 = Math.min(t1, fa / (fa - fb));
+  }
+  if (t1 - t0 < 1e-6) return null;
+  const p = (t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  return [p(t0), p(t1)];
+}
+
+function updateOverlay(lay = layout()) {
   overlay.clearLayers();
-  const lay = layout();
   if (!lay) return;
-  const { n, s, w, e } = lay.bbox;
   const style = { color: '#e4572e', weight: 1.5, dashArray: '5 4', interactive: false };
-  const lonAt = (k) => xToLon(lay.x1 + ((lay.x2 - lay.x1) * lay.colBreaks[k]) / (lay.NX - 1));
-  const latAt = (k) => yToLat(lay.y1 + ((lay.y2 - lay.y1) * lay.rowBreaks[k]) / (lay.NY - 1));
-  for (let k = 1; k < lay.cols; k++) L.polyline([[n, lonAt(k)], [s, lonAt(k)]], style).addTo(overlay);
-  for (let k = 1; k < lay.rows; k++) L.polyline([[latAt(k), w], [latAt(k), e]], style).addTo(overlay);
-  if (lay.cols * lay.rows > 1) {
-    for (let r = 0; r < lay.rows; r++)
-      for (let c = 0; c < lay.cols; c++) {
-        const icon = L.divIcon({ className: 'tile-label', html: tileName(r, c), iconSize: [40, 16] });
-        L.marker([(latAt(r) + latAt(r + 1)) / 2, (lonAt(c) + lonAt(c + 1)) / 2], { icon, interactive: false }).addTo(overlay);
-      }
+  const line = (a, b) => {
+    const seg = clipSeg(a, b, lay.poly);
+    if (seg) L.polyline(seg.map(([x, y]) => lay.toLatLng(x, y)), style).addTo(overlay);
+  };
+  for (let k = 1; k < lay.cols; k++) { const x = lay.colBreaks[k] * lay.dx; line([x, 0], [x, lay.H]); }
+  for (let k = 1; k < lay.rows; k++) { const y = (lay.NY - 1 - lay.rowBreaks[k]) * lay.dy; line([0, y], [lay.W, y]); }
+  if (lay.tiles.length > 1) {
+    for (const t of lay.tiles) {
+      const cx = t.gpoly.reduce((s, p) => s + p[0], 0) / t.gpoly.length, cy = t.gpoly.reduce((s, p) => s + p[1], 0) / t.gpoly.length;
+      const icon = L.divIcon({ className: 'tile-label', html: t.name, iconSize: [40, 16] });
+      L.marker(lay.toLatLng(cx, cy), { icon, interactive: false }).addTo(overlay);
+    }
   }
   const km = (m) => (m >= 10000 ? (m / 1000).toFixed(0) : (m / 1000).toFixed(1));
   const pts = lay.NX * lay.NY;
-  const tw = lay.W / lay.cols, th = lay.H / lay.rows;
+  const big = lay.tiles.reduce((a, t) => (t.w * t.h > a.w * a.h ? t : a), lay.tiles[0] || { w: 0, h: 0 });
   const lines = [
-    `Område: ${km(lay.widthM)} × ${km(lay.heightM)} km`,
+    `Område: ${km(lay.widthM)} × ${km(lay.heightM)} km · ${SHAPES[lay.shape].name.split(' (')[0].toLowerCase()}, rotert ${lay.rot}°`,
     `Modell: ${lay.W.toFixed(0)} × ${lay.H.toFixed(0)} mm · målestokk 1:${Math.round(1000 / lay.scaleMmPerM).toLocaleString('no')}`,
-    `Fliser: ${lay.cols} × ${lay.rows} (ca. ${tw.toFixed(0)} × ${th.toFixed(0)} mm hver)`,
+    `Fliser: ${lay.tiles.length} (største ca. ${big.w.toFixed(0)} × ${big.h.toFixed(0)} mm)`,
     `Rutenett: ${lay.NX} × ${lay.NY} punkter · 1 punkt = ${(lay.dx / lay.scaleMmPerM).toFixed(1)} m i terrenget`,
   ];
   let html = lines.map((l) => `<div>${l}</div>`).join('');
@@ -176,7 +301,7 @@ function updateOverlay() {
   $('layoutInfo').innerHTML = html;
 }
 
-for (const id of ['widthMm', 'maxTile', 'res']) $(id).addEventListener('input', () => { updateOverlay(); markStale(); });
+for (const id of ['widthMm', 'maxTile', 'res']) $(id).addEventListener('input', () => { if (state.sel) drawSel(); markStale(); });
 for (const id of ['colorSrc', 'nColors', 'smooth', 'seaWater', 'elevSrc', 'symTrees', 'symBuildings', 'treeSpacing', 'treeHeight', 'treeDiam', 'treeFill', 'bldMin', 'bldMinH'])
   $(id).addEventListener('change', markStale);
 for (const [k, s] of Object.entries(ELEV_SOURCES)) $('elevSrc').add(new Option(s.name, k));
@@ -260,7 +385,15 @@ async function generate() {
     const { elevM, used } = await sampleElevation(lay, $('elevSrc').value, (t, p) => setStatus(t, false, p));
 
     // 2) OSM-data (arealtyper og/eller symboler) – én felles spørring
-    const srcKey = $('colorSrc').value;
+    let srcKey = $('colorSrc').value;
+    if (COLOR_SOURCES[srcKey].norwayOnly && !inNorway(lay.bbox)) {
+      // Kartverket-kartene er blanke utenfor Norge → bruk et globalt kart i stedet.
+      srcKey = 'opentopomap';
+      $('colorSrc').value = srcKey;
+      onSourceChange();
+      setStatus('Området ligger utenfor Norge – bruker OpenTopoMap som fargekilde.', false, 0.5);
+      await new Promise((r) => setTimeout(r, 1200));
+    }
     const src = COLOR_SOURCES[srcKey];
     const wantTrees = $('symTrees').checked, wantBld = $('symBuildings').checked;
     const enabled = src.type === 'osm' ? OSM_CLASSES.filter((c) => document.querySelector(`[data-cls="${c.id}"]`).checked) : [];
@@ -305,10 +438,11 @@ async function generate() {
       setStatus('Reduserer farger …', false, 0.85);
       await tick();
       const rgb = new Uint8Array(nx * ny * 3);
-      for (let j = 0; j < ny; j++) {
-        const y = lay.y1 + ((lay.y2 - lay.y1) * (j + 0.5)) / ny;
-        for (let i = 0; i < nx; i++) cm.rgb(lay.x1 + ((lay.x2 - lay.x1) * (i + 0.5)) / nx, y, rgb, (j * nx + i) * 3);
-      }
+      for (let j = 0; j < ny; j++)
+        for (let i = 0; i < nx; i++) {
+          const [x, y] = lay.gridXY(i + 0.5, j + 0.5);
+          cm.rgb(x, y, rgb, (j * nx + i) * 3);
+        }
       ({ cls, palette } = quantizeColors(rgb, nx * ny, Math.round(num('nColors')) || 6));
     } else {
       cls = new Uint8Array(nx * ny);
@@ -375,8 +509,15 @@ function computeHeights(M) {
   const base = Math.max(0.2, num('base') || 3);
   const step = Math.max(0, num('seaStep') || 0);
   const e = M.elevM;
+  if (!M.inMask) {
+    const edges = polyEdges(M.poly), margin = -1.5 * Math.max(M.dx, M.dy);
+    M.inMask = new Uint8Array(e.length);
+    for (let j = 0; j < M.NY; j++)
+      for (let i = 0; i < M.NX; i++) M.inMask[j * M.NX + i] = insideDist(edges, i * M.dx, M.H - j * M.dy) >= margin ? 1 : 0;
+  }
   let minE = Infinity, maxE = -Infinity, hasSea = false;
   for (let i = 0; i < e.length; i++) {
+    if (!M.inMask[i]) continue;
     const v = flat ? Math.max(0, e[i]) : e[i];
     if (flat && e[i] <= 0) hasSea = true;
     if (v < minE) minE = v;
@@ -396,30 +537,24 @@ function computeHeights(M) {
   setStatus(`Ferdig. Terreng ${Math.round(minE)}–${Math.round(maxE)} moh. · modellhøyde ${maxZ.toFixed(1)} mm${warn}`, !!warn);
 }
 
-function tileOffset(M, r, c, gap) {
-  return [
-    M.colBreaks[c] * M.dx + c * gap,
-    (M.NY - 1 - M.rowBreaks[r + 1]) * M.dy + (M.rows - 1 - r) * gap,
-  ];
+function tileOffset(M, t, gap) {
+  return [t.rect.x0 + t.c * gap, t.rect.y0 + (M.rows - 1 - t.r) * gap];
 }
 
-function tileMesh(M, r, c, step) {
+function tileMesh(M, t, step) {
   return buildTileMesh(
     M,
-    indexRange(M.colBreaks[c], M.colBreaks[c + 1], step),
-    indexRange(M.rowBreaks[r], M.rowBreaks[r + 1], step),
+    indexRange(M.colBreaks[t.c], M.colBreaks[t.c + 1], step),
+    indexRange(M.rowBreaks[t.r], M.rowBreaks[t.r + 1], step),
+    t.poly,
   );
 }
 
 // Symboldeler (trær/bygninger) for én flis, i flisens lokale koordinater.
-function symbolParts(M, r, c) {
-  const rect = {
-    x0: M.colBreaks[c] * M.dx, x1: M.colBreaks[c + 1] * M.dx,
-    y0: (M.NY - 1 - M.rowBreaks[r + 1]) * M.dy, y1: (M.NY - 1 - M.rowBreaks[r]) * M.dy,
-  };
+function symbolParts(M, t) {
   const parts = [];
   for (const sp of M.symPalette) {
-    const mesh = buildSymbolMesh(M, M.symbols[sp.key], sp.key, rect);
+    const mesh = buildSymbolMesh(M, M.symbols[sp.key], sp.key, t.rect, t.gpoly);
     if (mesh) parts.push({ name: sp.key === 'trees' ? 'Trær' : 'Bygninger', key: sp.key, mesh, slot: sp.slot });
   }
   return parts;
@@ -437,14 +572,13 @@ function renderPreview(refit) {
   if (!M) return;
   if (!state.preview) state.preview = new Preview($('preview'));
   const step = Math.max(1, Math.ceil(Math.max(M.NX, M.NY) / 450));
-  const gap = M.cols * M.rows > 1 ? Math.max(2, M.W * 0.01) : 0;
+  const gap = M.tiles.length > 1 ? Math.max(2, M.W * 0.01) : 0;
   const tiles = [];
-  for (let r = 0; r < M.rows; r++)
-    for (let c = 0; c < M.cols; c++) {
-      const offset = tileOffset(M, r, c, gap);
-      tiles.push({ ...tileMesh(M, r, c, step), offset });
-      for (const p of symbolParts(M, r, c)) tiles.push({ ...p.mesh, offset, symKey: p.key });
-    }
+  for (const t of M.tiles) {
+    const offset = tileOffset(M, t, gap);
+    tiles.push({ ...tileMesh(M, t, step), offset });
+    for (const p of symbolParts(M, t)) tiles.push({ ...p.mesh, offset, symKey: p.key });
+  }
   state.preview.setTiles(tiles, M.palette.map((p) => p.color), wallColor(M), refit, symColors(M));
 }
 
@@ -492,29 +626,26 @@ function renderPalette() {
 
 // ---------------- Eksport ----------------
 function filePrefix(M) {
-  const lat = (M.bbox.n + M.bbox.s) / 2, lon = (M.bbox.w + M.bbox.e) / 2;
-  return `terreng_${lat.toFixed(3)}_${lon.toFixed(3)}`;
+  const { lat, lon } = M.center;
+  const shape = M.shape === 'rect' ? '' : '_' + M.shape;
+  return `terreng_${lat.toFixed(3)}_${lon.toFixed(3)}${shape}`;
 }
 
 function renderExports() {
   const M = state.model;
   const el = $('exports');
   el.innerHTML = '';
-  const many = M.cols * M.rows > 1;
-  for (let r = 0; r < M.rows; r++)
-    for (let c = 0; c < M.cols; c++) {
-      const w = (M.colBreaks[c + 1] - M.colBreaks[c]) * M.dx, h = (M.rowBreaks[r + 1] - M.rowBreaks[r]) * M.dy;
-      const btn = document.createElement('button');
-      btn.textContent = `⬇ ${many ? 'Flis ' + tileName(r, c) : 'Last ned 3MF'} · ${w.toFixed(0)} × ${h.toFixed(0)} mm`;
-      btn.onclick = () => exportTiles([[r, c]], `${filePrefix(M)}${many ? '_' + tileName(r, c) : ''}.3mf`);
-      el.append(btn);
-    }
+  const many = M.tiles.length > 1;
+  for (const t of M.tiles) {
+    const btn = document.createElement('button');
+    btn.textContent = `⬇ ${many ? 'Flis ' + t.name : 'Last ned 3MF'} · ${t.w.toFixed(0)} × ${t.h.toFixed(0)} mm`;
+    btn.onclick = () => exportTiles([t], `${filePrefix(M)}${many ? '_' + t.name : ''}.3mf`);
+    el.append(btn);
+  }
   if (many) {
     const all = document.createElement('button');
     all.textContent = '⬇ Alle fliser i én 3MF (én byggeplate per flis)';
-    const list = [];
-    for (let r = 0; r < M.rows; r++) for (let c = 0; c < M.cols; c++) list.push([r, c]);
-    all.onclick = () => exportTiles(list, `${filePrefix(M)}_alle.3mf`);
+    all.onclick = () => exportTiles(M.tiles, `${filePrefix(M)}_alle.3mf`);
     el.append(all);
   }
 }
@@ -525,11 +656,11 @@ async function exportTiles(list, filename) {
   try {
     setStatus('Bygger mesh …', false, 0);
     await tick();
-    const objects = list.map(([r, c]) => ({
-      name: tileName(r, c),
-      mesh: tileMesh(M, r, c, 1),
-      offset: list.length > 1 ? tileOffset(M, r, c, 10) : [0, 0],
-      parts: symbolParts(M, r, c),
+    const objects = list.map((t) => ({
+      name: t.name,
+      mesh: tileMesh(M, t, 1),
+      offset: list.length > 1 ? tileOffset(M, t, 10) : [0, 0],
+      parts: symbolParts(M, t),
     }));
     const tris = objects.reduce((s, o) => s + o.mesh.triCls.length + o.parts.reduce((a, p) => a + p.mesh.triCls.length, 0), 0);
     const slotOf = M.palette.map((p) => p.slot);
@@ -559,11 +690,12 @@ async function exportTiles(list, filename) {
 }
 
 // ---------------- Start ----------------
-$('colorSrc').value = 'topo_no';
+$('colorSrc').value = 'kv_clean';
 onSourceChange();
 {
-  const b = boundsFromHash() || L.latLngBounds([62.44, 7.60], [62.55, 7.85]);
-  setBounds(b);
-  map.fitBounds(b.pad(0.15));
+  const sel = selFromHash() || selFromBounds(L.latLngBounds([62.44, 7.60], [62.55, 7.85]));
+  setSel(sel);
+  map.fitBounds(state.outline.getBounds().pad(0.15));
 }
 window.terreng = state; // for feilsøking
+window.terrengMap = map;

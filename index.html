@@ -34,7 +34,11 @@
       <button id="drawBtn" type="button" title="Klikk og dra i kartet">Tegn område</button>
       <button id="viewBtn" type="button" title="Bruk det du ser i kartet">Bruk kartutsnittet</button>
     </div>
-    <p class="hint">Dra i de oransje hjørnene for å justere.</p>
+    <div class="grid2">
+      <label>Form<select id="shape"></select></label>
+      <label>Rotasjon (grader)<input id="rot" type="number" min="-180" max="180" step="1" value="0"></label>
+    </div>
+    <p class="hint">Dra i midtpunktet for å flytte, i hjørnet (firkant) for å endre størrelse og i det hvite håndtaket for å rotere.</p>
   </section>
 
   <section>

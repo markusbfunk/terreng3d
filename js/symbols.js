@@ -1,7 +1,7 @@
 // Symbolske trær (kjegler i skog) og bygninger (hus med saltak) som egne deler oppå terrenget.
 // Koordinater: globale mm, x østover fra vestkant, y nordover fra sørkant.
 import { lonToX, latToY } from './geo.js';
-import { WALL } from './mesh.js';
+import { WALL, polyEdges, insideDist } from './mesh.js';
 
 function rng(seed) {
   return () => {
@@ -21,10 +21,7 @@ export function terrainZ(M, x, y) {
   return (z[j * N + i] * (1 - a) + z[j * N + i + 1] * a) * (1 - b) + (z[(j + 1) * N + i] * (1 - a) + z[(j + 1) * N + i + 1] * a) * b;
 }
 
-const toGlobal = (M, lon, lat) => [
-  ((lonToX(lon) - M.x1) / (M.x2 - M.x1)) * M.W,
-  (1 - (latToY(lat) - M.y1) / (M.y2 - M.y1)) * M.H,
-];
+const toGlobal = (M, lon, lat) => M.toMM(lonToX(lon), latToY(lat));
 
 // Bygninger fra OSM-fotavtrykk → forenklede, orienterte hus. Tynnes ut så de ikke overlapper.
 export function placeBuildings(M, elements, opt) {
@@ -96,10 +93,11 @@ export function placeTrees(M, mask, opt, avoid) {
   return out;
 }
 
-// Lager én mesh av alle symboler som ligger helt inne i flisen (rect i globale mm).
+// Lager én mesh av alle symboler som ligger helt inne i flisen (rect og poly i globale mm).
 // Resultatet er i flisens lokale koordinater (origo i flisens sørvestre hjørne).
-export function buildSymbolMesh(M, items, kind, rect) {
-  const inside = items.filter((it) => it.x - it.rad > rect.x0 + 0.3 && it.x + it.rad < rect.x1 - 0.3 && it.y - it.rad > rect.y0 + 0.3 && it.y + it.rad < rect.y1 - 0.3);
+export function buildSymbolMesh(M, items, kind, rect, poly) {
+  const edges = polyEdges(poly || [[rect.x0, rect.y0], [rect.x1, rect.y0], [rect.x1, rect.y1], [rect.x0, rect.y1]]);
+  const inside = items.filter((it) => insideDist(edges, it.x, it.y) > it.rad + 0.3);
   if (!inside.length) return null;
   const SEG = 10;
   const vPer = kind === 'trees' ? SEG + 2 : 10;
