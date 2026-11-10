@@ -73,19 +73,19 @@
 
   <section>
     <h2>4. Symboler (fra OpenStreetMap)</h2>
-    <label class="check"><input id="symTrees" type="checkbox"> Trær i skog</label>
+    <label class="check"><input id="symTrees" type="checkbox" checked> Trær i skog</label>
     <div class="grid2" id="treeOpts">
-      <label>Avstand (mm)<input id="treeSpacing" type="number" min="1" max="20" step="0.5" value="3"></label>
-      <label>Høyde (mm)<input id="treeHeight" type="number" min="1" max="15" step="0.5" value="3"></label>
-      <label>Diameter (mm)<input id="treeDiam" type="number" min="0.8" max="8" step="0.1" value="1.8"></label>
+      <label>Avstand (mm)<input id="treeSpacing" type="number" min="0.5" max="20" step="0.1" value="1"></label>
+      <label>Høyde (mm)<input id="treeHeight" type="number" min="1" max="15" step="0.5" value="4"></label>
+      <label>Diameter (mm)<input id="treeDiam" type="number" min="0.8" max="8" step="0.1" value="1.2"></label>
       <label>Tetthet (0–1)<input id="treeFill" type="number" min="0.05" max="1" step="0.05" value="0.6"></label>
     </div>
-    <label class="check"><input id="symBuildings" type="checkbox"> Bygninger</label>
+    <label class="check"><input id="symBuildings" type="checkbox" checked> Bygninger</label>
     <div class="grid2" id="bldOpts">
       <label>Minste størrelse (mm)<input id="bldMin" type="number" min="0.8" max="10" step="0.1" value="1.6"></label>
       <label>Minste høyde (mm)<input id="bldMinH" type="number" min="0.4" max="10" step="0.2" value="1.2"></label>
     </div>
-    <p class="hint">Symbolene blir egne deler med eget filament. Små bygninger forstørres til minstestørrelsen og tynnes ut der det er tett.</p>
+    <p class="hint">Symbolene blir egne deler og deler filament med en av kartfargene (kan endres under Filamenter). Små bygninger forstørres til minstestørrelsen og tynnes ut der det er tett.</p>
   </section>
 
   <section>
@@ -116,6 +116,10 @@
   <nav class="tabs">
     <button id="tabMap" class="tab active" type="button">Kart</button>
     <button id="tab3d" class="tab" type="button" disabled>3D-forhåndsvisning</button>
+    <span id="symToggles" class="symtoggles" hidden>
+      <label class="check" id="showTreesLbl"><input id="showTrees" type="checkbox" checked> Trær</label>
+      <label class="check" id="showBldLbl"><input id="showBld" type="checkbox" checked> Bygninger</label>
+    </span>
     <span id="staleNote" class="stale" hidden>Innstillingene er endret – generer på nytt</span>
   </nav>
   <div id="map" class="view"></div>

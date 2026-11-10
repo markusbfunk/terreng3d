@@ -380,6 +380,21 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 // ---------------- Generering ----------------
 const ROAD_COLOR = '#3a3a3a';
 
+// Velger hvilken kartfarge (filamentplass) trær og bygninger skal dele:
+// trær → den mest «skoggrønne» fargen, bygninger → veifargen hvis den finnes, ellers den mørkeste fargen.
+function shareSlot(palette, key) {
+  const rgb = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
+  const lum = (h) => { const [r, g, b] = rgb(h); return 0.299 * r + 0.587 * g + 0.114 * b; };
+  let best;
+  if (key === 'trees') {
+    const score = (h) => { const [r, g, b] = rgb(h); return (g - Math.max(r, b)) * 2 - lum(h) * 0.5; };
+    best = palette.reduce((a, p) => (score(p.color) > score(a.color) ? p : a));
+  } else {
+    best = palette.find((p) => p.id === 'roads') || palette.reduce((a, p) => (lum(p.color) < lum(a.color) ? p : a));
+  }
+  return { slot: best.slot, color: best.color };
+}
+
 // Erstatter kjente kartfarger (± toleranse) med én felles farge, f.eks. alle typer bebyggelse.
 function mergeColors(rgb, rules) {
   const hex = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
@@ -500,8 +515,10 @@ async function generate() {
           cm.rgb(x, y, rgb, (j * nx + i) * 3);
         }
       if (src.merge) mergeColors(rgb, src.merge);
-      ({ cls, palette } = quantizeColors(rgb, nx * ny, Math.round(num('nColors')) || 6));
-      if (src.roads && $('roads').checked) {
+      // Veiene er én av filamentfargene, så kartet reduseres til én farge mindre.
+      const wantRoads = !!(src.roads && $('roads').checked);
+      ({ cls, palette } = quantizeColors(rgb, nx * ny, Math.max(1, (Math.round(num('nColors')) || 6) - (wantRoads ? 1 : 0))));
+      if (wantRoads) {
         const rm = await fetchMosaic(src.roads, zc, lay, 'rgb', (p) => setStatus(`Henter veier (zoom ${zc}) …`, false, 0.85 + p * 0.05));
         roadMask = new Uint8Array(nx * ny);
         for (let j = 0; j < ny; j++)
@@ -533,13 +550,12 @@ async function generate() {
     if (osmData && (wantTrees || wantBld)) {
       setStatus('Plasserer symboler …', false, 0.95);
       await tick();
-      let nextSlot = Math.max(...palette.map((p) => p.slot)) + 1;
       let bld = null;
       if (wantBld) {
         bld = placeBuildings(M, osmData.elements || [], { minSize: num('bldMin') || 1.6, minHeight: num('bldMinH') || 1.2, exag: num('exag') || 1, max: 20000 });
         if (bld.items.length) {
           M.symbols.buildings = bld.items;
-          M.symPalette.push({ key: 'buildings', name: `Bygninger (${bld.items.length})`, color: '#b5523e', slot: Math.min(16, nextSlot++), pct: null });
+          M.symPalette.push({ key: 'buildings', name: `Bygninger (${bld.items.length})`, ...shareSlot(palette, 'buildings'), pct: null });
         }
       }
       if (wantTrees) {
@@ -548,7 +564,7 @@ async function generate() {
         const trees = placeTrees(M, mask, { spacing: Math.max(2 * r, num('treeSpacing') || 3), fill: num('treeFill') || 0.6, radius: r, height: num('treeHeight') || 3, max: 40000 }, bld);
         if (trees.length) {
           M.symbols.trees = trees;
-          M.symPalette.push({ key: 'trees', name: `Trær (${trees.length})`, color: '#1f4d22', slot: Math.min(16, nextSlot++), pct: null });
+          M.symPalette.push({ key: 'trees', name: `Trær (${trees.length})`, ...shareSlot(palette, 'trees'), pct: null });
         }
       }
     }
@@ -562,6 +578,9 @@ async function generate() {
     $('tab3d').disabled = false;
     renderPalette();
     renderExports();
+    $('symToggles').hidden = !M.symPalette.length;
+    $('showTreesLbl').hidden = !M.symbols.trees;
+    $('showBldLbl').hidden = !M.symbols.buildings;
     showTab('3d');
     renderPreview(true);
   } catch (err) {
@@ -621,10 +640,14 @@ function tileMesh(M, t, step, engrave) {
   );
 }
 
+const symVisible = (key) => (key === 'trees' ? $('showTrees') : $('showBld')).checked;
+for (const id of ['showTrees', 'showBld']) $(id).addEventListener('change', () => { if (state.model) { renderPreview(false); renderExports(); } });
+
 // Symboldeler (trær/bygninger) for én flis, i flisens lokale koordinater.
 function symbolParts(M, t) {
   const parts = [];
   for (const sp of M.symPalette) {
+    if (!symVisible(sp.key)) continue;
     const mesh = buildSymbolMesh(M, M.symbols[sp.key], sp.key, t.rect, t.gpoly);
     if (mesh) parts.push({ name: sp.key === 'trees' ? 'Trær' : 'Bygninger', key: sp.key, mesh, slot: sp.slot });
   }
@@ -689,7 +712,14 @@ function renderPalette() {
     for (let s = 1; s <= Math.min(16, nSlots); s++) sel.add(new Option(`F${s}`, s));
     sel.value = p.slot;
     color.oninput = () => { p.color = color.value; refreshColors(); };
-    sel.onchange = () => { p.slot = +sel.value; refreshColors(); };
+    sel.onchange = () => {
+      p.slot = +sel.value;
+      if (p.pct == null) {
+        const owner = M.palette.find((q) => q.slot === p.slot);
+        if (owner) color.value = p.color = owner.color;
+      }
+      refreshColors();
+    };
     row.append(color, name, pct, sel);
     el.append(row);
   });
