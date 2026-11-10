@@ -117,18 +117,54 @@ export function finalizePalette(cls, palette) {
 
 // Veimaske: en celle er vei hvis noen av 3×3 delpunkter treffer veilaget, så tynne veier blir sammenhengende.
 // Ved fin oppløsning (< 0,6 mm/celle) utvides linjene med én celle (mot øst og sør), så de blir minst ~0,8 mm.
-export function roadMaskFrom(mosaic, lay, nx, ny) {
+// Veiklasse ut fra kartfargen i Kartverkets veilag (N50/N100/N250):
+// 3 = riks-/europa-/fylkesvei (#d2232a) og motorvei (gul), 2 = øvrige bilveier (grå #6e6e6e),
+// 0 = ikke vei: gjennomsiktig, tunneler (lys rød), stier og fergeruter (prikket #c11d1d), kantutjevning.
+// Private og kommunale veier har samme farge i kartet og kan ikke skilles.
+export function roadKind(p) {
+  if (!p || p[3] < 120) return 0;
+  const [r, g, b] = p, mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  if (r > 200 && g > 170 && b < 90) return 3;
+  if (r >= 195 && g < 70 && b >= 34 && b < 75) return 3;
+  if (mx - mn < 25 && mx < 150) return 2;
+  return 0;
+}
+export const ROAD_LEVELS = { major: 3, normal: 2 };
+
+// Fjerner sammenhengende biter mindre enn minCells (prikker fra stier, løse stumper).
+function dropSmall(m, nx, ny, minCells) {
+  const seen = new Uint8Array(m.length), stack = [], comp = [];
+  for (let s = 0; s < m.length; s++) {
+    if (!m[s] || seen[s]) continue;
+    comp.length = 0; stack.push(s); seen[s] = 1;
+    while (stack.length) {
+      const k = stack.pop(); comp.push(k);
+      const i = k % nx, j = (k / nx) | 0;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const ii = i + di, jj = j + dj;
+        if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) continue;
+        const q = jj * nx + ii;
+        if (m[q] && !seen[q]) { seen[q] = 1; stack.push(q); }
+      }
+    }
+    if (comp.length < minCells) for (const k of comp) m[k] = 0;
+  }
+}
+
+export function roadMaskFrom(mosaic, lay, nx, ny, level = 'normal') {
+  const min = ROAD_LEVELS[level] || 2;
   const m = new Uint8Array(nx * ny);
   const sub = [0.17, 0.5, 0.83];
   for (let j = 0; j < ny; j++)
     for (let i = 0; i < nx; i++) {
       let hit = 0;
       for (const v of sub) {
-        for (const u of sub) if (mosaic.alpha(...lay.gridXY(i + u, j + v)) > 0.35) { hit = 1; break; }
+        for (const u of sub) if (roadKind(mosaic.rgba(...lay.gridXY(i + u, j + v))) >= min) { hit = 1; break; }
         if (hit) break;
       }
       m[j * nx + i] = hit;
     }
+  dropSmall(m, nx, ny, Math.max(4, Math.round(3 / lay.dx)));
   if (lay.dx >= 0.6) return m;
   const out = m.slice();
   for (let j = 0; j < ny; j++)

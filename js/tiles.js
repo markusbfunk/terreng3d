@@ -98,6 +98,16 @@ export async function fetchMosaic(tpl, z, lay, kind, onProgress) {
 }
 
 export class Mosaic {
+  // Rå RGBA (0–255) i nærmeste piksel, eller null.
+  rgba(x, y) {
+    const [gx, gy] = this._px(x, y);
+    const ix = Math.round(gx), iy = Math.round(gy);
+    const t = this.tiles[(iy >> 8) * this.cols + (ix >> 8)];
+    if (!t) return null;
+    const k = ((iy & 255) * 256 + (ix & 255)) * 4;
+    return [t[k], t[k + 1], t[k + 2], t[k + 3]];
+  }
+
   // Dekning (alfa 0–1) i nærmeste piksel. Manglende fliser gir 0.
   alpha(x, y) {
     const [gx, gy] = this._px(x, y);

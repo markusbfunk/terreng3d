@@ -297,3 +297,42 @@ function engraveBottom(P, tri, addV, bottomLoop, { shapes, box, depth, triangula
   });
   return true;
 }
+
+// Innlagt tekst: bokstavene som egne, lukkede prismer fra z = 0 til depth. De fyller nøyaktig hulrommet
+// engraveBottom lager, så teksten kan printes i et annet filament uten hulrom.
+export function textPrism({ shapes, depth, triangulate }) {
+  const P = new Buf(Float64Array, 1024), I = new Buf(Uint32Array, 1024), C = new Buf(Uint8Array, 256);
+  const addV = (x, y, z) => { P.push3(x, y, z); return P.n / 3 - 1; };
+  const tri = (a, b, c) => { I.push3(a, b, c); C.push1(WALL); };
+  const v2 = (p) => ({ x: p[0], y: p[1] });
+  const xy = (v) => [P.a[v * 3], P.a[v * 3 + 1]];
+  const face = (ids, faces, up) => {
+    const crs = faces.map(([i, j, k]) => {
+      const a = xy(ids[i]), b = xy(ids[j]), c = xy(ids[k]);
+      return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    });
+    const major = crs.reduce((s, c) => s + Math.sign(c), 0) < 0 ? -1 : 1;
+    faces.forEach(([i, j, k], n) => {
+      const sg = Math.abs(crs[n]) < 1e-12 ? major : Math.sign(crs[n]);
+      if ((sg > 0) === up) tri(ids[i], ids[j], ids[k]);
+      else tri(ids[i], ids[k], ids[j]);
+    });
+  };
+  for (const sh of shapes) {
+    const outer = ccw(sh.outer), holes = sh.holes.map(ccw);
+    const rings = [outer, ...holes].map((pts) => ({ lo: pts.map(([x, y]) => addV(x, y, 0)), hi: pts.map(([x, y]) => addV(x, y, depth)) }));
+    const faces = triangulate(outer.map(v2), holes.map((h) => h.map(v2)));
+    face(rings.flatMap((r) => r.lo), faces, false);
+    face(rings.flatMap((r) => r.hi), faces, true);
+    // Vegger med normal ut av bokstaven: ytterkontur (mot klokka) → høyre, hull → venstre.
+    rings.forEach((r, ri) => {
+      const n = r.lo.length;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n, p0 = r.lo[i], q0 = r.lo[j], p1 = r.hi[i], q1 = r.hi[j];
+        if (ri === 0) { tri(p0, q0, q1); tri(p0, q1, p1); }
+        else { tri(p0, q1, q0); tri(p0, p1, q1); }
+      }
+    });
+  }
+  return { positions: new Float32Array(P.a.subarray(0, P.n)), indices: I.done(), triCls: C.done() };
+}

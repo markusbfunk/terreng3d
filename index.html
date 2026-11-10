@@ -50,7 +50,7 @@
       <label>Oppløsning (mm/punkt)<input id="res" type="number" min="0.2" max="2" step="0.05" value="0.4"></label>
       <label>Høydeoverdrivelse (×)<input id="exag" type="number" min="0.5" max="10" step="0.1" value="1.5"></label>
       <label>Sokkel (mm)<input id="base" type="number" min="0.6" max="30" step="0.2" value="3"></label>
-      <label>Havtrinn (mm)<input id="seaStep" type="number" min="0" max="5" step="0.2" value="0.6"></label>
+      <label>Havtrinn (mm)<input id="seaStep" type="number" min="0" max="5" step="0.2" value="0"></label>
     </div>
     <label class="check"><input id="flatSea" type="checkbox" checked> Flatt hav (høyde under 0 m kuttes)</label>
     <p class="hint">H2D: byggevolum ca. 325 × 320 × 325 mm. 300 mm fliser gir litt margin.</p>
@@ -67,6 +67,10 @@
     <div id="rasterOpts" hidden>
       <label>Antall farger (filamenter)<input id="nColors" type="number" min="2" max="16" value="6"></label>
       <label class="check" id="roadOpt"><input id="roads" type="checkbox" checked> Veier (lys grå)</label>
+      <label id="roadLevelLbl">Hvilke veier<select id="roadLevel">
+        <option value="normal" selected>Alle bilveier</option>
+        <option value="major">Bare riks-, europa- og fylkesveier</option>
+      </select></label>
     </div>
     <label>Støyfjerning (passeringer)<input id="smooth" type="number" min="0" max="6" value="2"></label>
   </section>
@@ -82,8 +86,8 @@
     </div>
     <label class="check"><input id="symBuildings" type="checkbox" checked> Bygninger</label>
     <div class="grid2" id="bldOpts">
-      <label>Minste størrelse (mm)<input id="bldMin" type="number" min="0.8" max="10" step="0.1" value="1.2"></label>
-      <label>Minste høyde (mm)<input id="bldMinH" type="number" min="0.4" max="10" step="0.2" value="1.2"></label>
+      <label>Minste størrelse (mm)<input id="bldMin" type="number" min="0.5" max="10" step="0.1" value="0.8"></label>
+      <label>Minste høyde (mm)<input id="bldMinH" type="number" min="0.4" max="10" step="0.2" value="1"></label>
     </div>
     <p class="hint">Symbolene blir egne deler med egne, naturlige farger når det er nok filamenter; ellers deler de filament med skog/land og bebyggelse. Små bygninger forstørres til minstestørrelsen og tynnes ut der det er tett.</p>
   </section>
@@ -103,10 +107,14 @@
       <option value="bambu">Bambu Studio-prosjekt (H2D 0.4, med filamenter)</option>
       <option value="generic">Generisk 3MF (PrusaSlicer, OrcaSlicer m.fl.)</option>
     </select></label>
-    <label class="check"><input id="labelOn" type="checkbox" checked> Gravér stedsnavn og koordinater i undersiden</label>
+    <label id="labelModeLbl">Stedsnavn og koordinater i undersiden<select id="labelMode">
+      <option value="inlay">Innlagt i eget filament (flat bunn)</option>
+      <option value="engrave">Gravert (fordypning)</option>
+      <option value="off">Av</option>
+    </select></label>
     <label>Stedsnavn<input id="labelName" type="text" placeholder="hentes automatisk"></label>
     <div id="exports"></div>
-    <p class="hint">Teksten speilvendes slik at den leses riktig når modellen snus, og graveres 0,6 mm inn. Bambu-prosjektet åpnes med Fil → Åpne prosjekt. Filamentene får fargene fra listen over; bytt til dine egne filamenter i Bambu Studio før printing.</p>
+    <p class="hint">Teksten speilvendes slik at den leses riktig når modellen snus, og er 0,6 mm tykk. Bambu-prosjektet åpnes med Fil → Åpne prosjekt. Filamentene får fargene fra listen over; bytt til dine egne filamenter i Bambu Studio før printing.</p>
   </section>
 
   <footer id="credits"></footer>

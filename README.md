@@ -33,7 +33,8 @@ Det valgte utsnittet lagres i nettadressen (`#c=lat,lon&s=bredde_m,høyde_m&r=gr
      farge. «Antall farger» er totalt antall filamenter, og klassene får plass i denne rekkefølgen:
      hav/vann, land, bebyggelse, snø/bre, skog vs. åpent land/fjell, veier, trær, bygninger, dyrket mark.
      Det som ikke får plass, slås sammen med nærmeste klasse. Veier legges på til slutt som sammenhengende
-     lys grå linjer (ikke over vann). Utenfor Norge byttes det automatisk til OpenTopoMap.
+     lys grå linjer (ikke over vann). Velg alle bilveier eller bare riks-, europa- og fylkesveier; stier,
+     traktorveier, tunneler, fergeruter og småbiter tas aldri med. Utenfor Norge byttes det automatisk til OpenTopoMap.
    - *Kartverket topo* (kun Norge) eller *OpenTopoMap* (global), begge med tekst: fargene i kartet
      reduseres med k-means (CIELAB) til N filamentfarger.
    - *Sentinel-2* (satellitt, 10 m): fargene reduseres på samme måte. Lisensen er CC BY-NC-SA, altså kun
@@ -45,8 +46,9 @@ Det valgte utsnittet lagres i nettadressen (`#c=lat,lon&s=bredde_m,høyde_m&r=gr
 5. **Mesh:** Hver flis blir en lukket (vanntett) modell. Alle flisene bruker samme høydeskala og samme
    bunnivå, slik at de passer sammen.
 6. **Tekst i undersiden:** stedsnavn (nærmeste by/tettsted eller kommune, via Nominatim), koordinatene til
-   midtpunktet og flisnavnet graveres 0,6 mm inn i bunnen, speilvendt slik at det leses riktig når modellen
-   snus. Navnet kan endres.
+   midtpunktet og flisnavnet, speilvendt slik at det leses riktig når modellen snus. Standard er innlagt tekst:
+   bokstavene er en egen del (0,6 mm) i et annet filament som fyller fordypningen, så bunnen blir flat uten
+   hulrom. Alternativt kan teksten graveres som fordypning. Navnet kan endres.
 7. **3MF-eksport:**
    - *Bambu Studio-prosjekt (H2D 0.4)*: filamenter i kartfargene, malte flater og én byggeplate per flis.
      Åpnes med Fil → Åpne prosjekt.

@@ -32,7 +32,8 @@ const TIPS = {
   showBldLbl: 'Vis eller skjul bygningene i modellen. Gjelder både forhåndsvisningen og eksporten.',
   genBtn: 'Henter data og bygger modellen. Store områder kan ta litt tid.',
   format: 'Bambu Studio-prosjekt har filamenter og byggeplater klare for H2D. Generisk 3MF passer PrusaSlicer, OrcaSlicer og andre.',
-  labelOn: 'Graverer stedsnavn og koordinatene til midtpunktet 0,6 mm inn i bunnen. Teksten speilvendes, så den leses riktig når modellen snus. Ved flere fliser får hver flis også navnet sitt. Drei 3D-visningen for å se undersiden.',
+  labelModeLbl: 'Stedsnavn, koordinater og flisnavn i undersiden, speilvendt slik at det leses når modellen snus. «Innlagt» printer bokstavene 0,6 mm tykt i et annet filament i de første lagene, så bunnen blir flat og helt uten hulrom (krever fargebytte i de nederste lagene). «Gravert» lager en 0,6 mm fordypning i samme filament. Drei 3D-visningen for å se undersiden.',
+  roadLevelLbl: 'Hvilke veier som tas med, ut fra veiklassen i Kartverkets kart. Stier, traktorveier, tunneler og fergeruter tas aldri med, og løse småbiter under ca. 3 mm fjernes. Store områder bruker automatisk et grovere kart med færre småveier.',
   labelName: 'Navnet som graveres. Fylles automatisk med nærmeste by eller tettsted, eller kommunen hvis området ikke ligger i et. Du kan skrive inn et eget.',
 };
 

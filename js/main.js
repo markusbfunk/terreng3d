@@ -3,7 +3,7 @@ import { ELEVATION, COLOR_SOURCES, BASEMAPS, inNorway } from './sources.js';
 import { chooseZoom, fetchMosaic } from './tiles.js';
 import { quantizeColors, majorityFilter, compactPalette } from './colors.js';
 import { BASE_CLASS, OSM_CLASSES, fetchOsm, rasterizeOsm } from './osm.js';
-import { buildTileMesh, indexRange, clipPoly, polyArea, polyEdges, insideDist } from './mesh.js';
+import { textPrism, buildTileMesh, indexRange, clipPoly, polyArea, polyEdges, insideDist } from './mesh.js';
 import { SHAPES, shapeAspect, shapePoly } from './shapes.js';
 import { ELEV_SOURCES, KARTVERKET, sampleElevation } from './elevation.js';
 import { placeTrees, placeBuildings, buildSymbolMesh } from './symbols.js';
@@ -309,7 +309,7 @@ function updateOverlay(lay = layout()) {
 }
 
 for (const id of ['widthMm', 'maxTile', 'res']) $(id).addEventListener('input', () => { if (state.sel) drawSel(); markStale(); });
-for (const id of ['colorSrc', 'nColors', 'smooth', 'seaWater', 'elevSrc', 'symTrees', 'symBuildings', 'roads', 'treeSpacing', 'treeHeight', 'treeDiam', 'treeFill', 'bldMin', 'bldMinH'])
+for (const id of ['colorSrc', 'nColors', 'smooth', 'seaWater', 'elevSrc', 'symTrees', 'symBuildings', 'roads', 'roadLevel', 'treeSpacing', 'treeHeight', 'treeDiam', 'treeFill', 'bldMin', 'bldMinH'])
   $(id).addEventListener('change', markStale);
 for (const [k, s] of Object.entries(ELEV_SOURCES)) $('elevSrc').add(new Option(s.name, k));
 const syncSymOpts = () => {
@@ -348,10 +348,12 @@ function onSourceChange() {
   $('osmOpts').hidden = t !== 'osm';
   $('rasterOpts').hidden = t !== 'raster';
   $('roadOpt').hidden = !COLOR_SOURCES[$('colorSrc').value].roads;
+  $('roadLevelLbl').hidden = !COLOR_SOURCES[$('colorSrc').value].roads || !$('roads').checked;
   $('smooth').value = t === 'raster' ? 2 : 0;
   updateCredits();
 }
 $('colorSrc').addEventListener('change', onSourceChange);
+$('roads').addEventListener('change', () => { $('roadLevelLbl').hidden = !$('roads').checked; });
 
 function updateCredits(used) {
   const src = COLOR_SOURCES[$('colorSrc').value];
@@ -411,7 +413,7 @@ function mergeColors(rgb, rules) {
 
 // Fyller inn stedsnavn automatisk (med mindre brukeren har skrevet et eget).
 async function autoLabel(M) {
-  if (!$('labelOn').checked) return;
+  if (!labelOn()) return;
   const f = $('labelName');
   if (f.value && f.value !== f.dataset.auto) return;
   try {
@@ -425,7 +427,7 @@ async function autoLabel(M) {
 
 // Tekst som graveres inn i bunnen av én flis (null hvis av eller ikke plass).
 async function tileEngrave(M, t) {
-  if (!$('labelOn').checked) return null;
+  if (!labelOn()) return null;
   const depth = Math.min(0.6, (Math.max(0.2, num('base') || 3)) - 0.4);
   if (depth < 0.2) return null;
   const font = await loadFont();
@@ -434,24 +436,44 @@ async function tileEngrave(M, t) {
     { text: coordText(M.center.lat, M.center.lon), scale: 0.55 },
   ];
   if (M.tiles.length > 1) lines.push({ text: 'Flis ' + t.name, scale: 0.55 });
-  const size = Math.max(4, Math.min(14, 0.09 * Math.min(t.w, t.h)));
+  const size = Math.max(3.5, Math.min(8, 0.05 * Math.min(t.w, t.h)));
   // Får ikke alt plass, droppes koordinatene først, så flisnavnet.
   const tries = [lines, lines.filter((_, i) => i !== 1), lines.slice(0, 1)];
   let res = null;
-  for (const ls of tries) if ((res = labelShapes(font, ls, t.poly, { size, minSize: 3, margin: 2 }))) break;
+  for (const ls of tries) if ((res = labelShapes(font, ls, t.poly, { size, minSize: 2.5, margin: 2 }))) break;
   return res ? { shapes: res.shapes, box: res.box, depth, triangulate } : null;
 }
 
 // Beregner tekst for alle fliser (brukes av forhåndsvisning og eksport).
+const labelOn = () => $('labelMode').value !== 'off';
+const labelInlay = () => $('labelMode').value === 'inlay';
+
+// Innlagt tekst får en filamentplass (standard: den mørkeste fargen) og vises i filamentlisten.
+function syncLabelEntry() {
+  const M = state.model;
+  if (!M) return;
+  M.symPalette = M.symPalette.filter((s) => s.key !== 'label');
+  if (labelInlay()) {
+    const lum = (h) => { const [r, g, b] = [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16)); return 0.299 * r + 0.587 * g + 0.114 * b; };
+    const all = [...M.palette, ...M.symPalette];
+    const prev = M.labelSlot && all.find((p) => p.slot === M.labelSlot);
+    const pick = prev || all.reduce((a, p) => (lum(p.color) < lum(a.color) ? p : a));
+    M.labelSlot = pick.slot;
+    M.symPalette.push({ key: 'label', name: 'Tekst i bunnen – deler filament', slot: pick.slot, color: pick.color, pct: null });
+  }
+  renderPalette();
+}
+$('labelMode').addEventListener('change', () => { syncLabelEntry(); refreshColors(); renderExports(); });
+
 async function updateEngraves() {
   const M = state.model;
   state.engraves = new Map();
-  if (!M || !$('labelOn').checked) return;
+  if (!M || !labelOn()) return;
   for (const t of M.tiles) {
     try { state.engraves.set(t.name, await tileEngrave(M, t)); } catch (err) { console.warn('Tekst i bunnen:', err); }
   }
 }
-for (const id of ['labelOn', 'labelName', 'base']) $(id).addEventListener('change', async () => { if (state.model) { await updateEngraves(); renderPreview(false); } });
+for (const id of ['labelMode', 'labelName', 'base']) $(id).addEventListener('change', async () => { if (state.model) { await updateEngraves(); renderPreview(false); } });
 
 async function generate() {
   const lay = layout();
@@ -551,7 +573,7 @@ async function generate() {
       }
       if (wantRoads && (!classPlan || classPlan.has('roads'))) {
         const rm = await fetchMosaic(src.roads, zc, lay, 'rgb', (p) => setStatus(`Henter veier (zoom ${zc}) …`, false, 0.85 + p * 0.05));
-        roadMask = roadMaskFrom(rm, lay, nx, ny);
+        roadMask = roadMaskFrom(rm, lay, nx, ny, $('roadLevel').value);
       }
     } else {
       cls = new Uint8Array(nx * ny);
@@ -620,6 +642,7 @@ async function generate() {
     $('showTreesLbl').hidden = !M.symbols.trees;
     $('showBldLbl').hidden = !M.symbols.buildings;
     showTab('3d');
+    syncLabelEntry();
     await updateEngraves();
     renderPreview(true);
   } catch (err) {
@@ -686,6 +709,11 @@ for (const id of ['showTrees', 'showBld']) $(id).addEventListener('change', () =
 function symbolParts(M, t) {
   const parts = [];
   for (const sp of M.symPalette) {
+    if (sp.key === 'label') {
+      const e = labelInlay() && state.engraves?.get(t.name);
+      if (e) parts.push({ name: 'Tekst', key: 'label', mesh: textPrism(e), slot: sp.slot });
+      continue;
+    }
     if (!symVisible(sp.key)) continue;
     const mesh = buildSymbolMesh(M, M.symbols[sp.key], sp.key, t.rect, t.gpoly);
     if (mesh) parts.push({ name: sp.key === 'trees' ? 'Trær' : 'Bygninger', key: sp.key, mesh, slot: sp.slot });
@@ -753,6 +781,7 @@ function renderPalette() {
     color.oninput = () => { p.color = color.value; refreshColors(); };
     sel.onchange = () => {
       p.slot = +sel.value;
+      if (p.key === 'label') M.labelSlot = p.slot;
       if (p.pct == null) {
         const owner = M.palette.find((q) => q.slot === p.slot);
         if (owner) color.value = p.color = owner.color;
@@ -823,7 +852,7 @@ async function exportTiles(list, filename) {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-    const txt = $("labelOn").checked ? (nText ? ` Tekst «${$("labelName").value.trim()}» gravert i undersiden av ${nText} av ${list.length} fliser.` : " Teksten fikk ikke plass i undersiden.") : "";
+    const txt = labelOn() ? (nText ? ` Tekst «${$("labelName").value.trim()}» ${labelInlay() ? 'lagt inn' : 'gravert'} i undersiden av ${nText} av ${list.length} fliser.` : " Teksten fikk ikke plass i undersiden.") : "";
     setStatus(`Lagret ${filename} (${(blob.size / 1e6).toFixed(1)} MB, ${(tris / 1e6).toFixed(2)} mill. trekanter).${txt}`);
   } catch (err) {
     console.error(err);
