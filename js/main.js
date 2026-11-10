@@ -10,7 +10,7 @@ import { placeTrees, placeBuildings, buildSymbolMesh } from './symbols.js';
 import { build3mf } from './export3mf.js';
 import { Preview } from './preview.js';
 import { loadFont, labelShapes, triangulate, placeName, coordText } from './label.js';
-import { CLASSES, SYMBOL_COLORS, WATER_BASE, classifyKartverket, planClasses, buildPalette, baseCounts, finalizePalette, roadMaskFrom } from './landclass.js';
+import { CLASSES, SYMBOL_COLORS, WATER_BASE, removeThinBuilt, openAsGreen, classifyKartverket, planClasses, buildPalette, baseCounts, finalizePalette, roadMaskFrom } from './landclass.js';
 
 const $ = (id) => document.getElementById(id);
 const num = (id) => parseFloat($(id).value);
@@ -418,7 +418,7 @@ async function autoLabel(M) {
   if (f.value && f.value !== f.dataset.auto) return;
   try {
     setStatus('Henter stedsnavn …', false, 0.97);
-    const name = await placeName(M.center.lat, M.center.lon);
+    const name = await placeName(M.center.lat, M.center.lon, Math.max(M.widthM, M.heightM));
     f.value = f.dataset.auto = name;
   } catch (err) {
     console.warn(err);
@@ -539,8 +539,11 @@ async function generate() {
       }
       keepFirst = true;
     } else if (src.type === 'raster') {
-      const zc = chooseZoom(lay, sampleM / 1.5, src.maxZoom, 500);
-      const cm = await fetchMosaic(src.url, zc, lay, 'rgb', (p) => setStatus(`Henter fargekart (zoom ${zc}) …`, false, 0.5 + p * 0.3));
+      // Små, detaljerte utsnitt (zoom ≥ 16, målestokk < 1:12 000) bruker Kartverkets detaljerte FKB-kart.
+      let zc = chooseZoom(lay, sampleM / 1.5, src.urlDetail ? src.detailMaxZoom : src.maxZoom, 500);
+      const detail = !!src.urlDetail && zc >= 16;
+      if (src.urlDetail && !detail) zc = Math.min(zc, src.maxZoom);
+      const cm = await fetchMosaic(detail ? src.urlDetail : src.url, zc, lay, 'rgb', (p) => setStatus(`Henter fargekart (zoom ${zc}) …`, false, 0.5 + p * 0.3));
       setStatus('Fordeler farger …', false, 0.85);
       await tick();
       const n = nx * ny;
@@ -560,6 +563,9 @@ async function generate() {
             sea[j * nx + i] = Math.max(elevM[k], elevM[k + 1], elevM[k + NX], elevM[k + NX + 1]) <= 0 ? 1 : 0;
           }
         const base = classifyKartverket(rgb, alpha, sea, n);
+        // FKB tegner veiarealer i bebyggelsesfarge: fjern smale bebyggelsesstriper (under ca. 12 m).
+        if (detail) openAsGreen(base);
+        if (detail) removeThinBuilt(base, nx, ny, Math.max(1, Math.min(3, Math.round(6 / (lay.dx / lay.scaleMmPerM)))));
         onWater = base.map((b) => (b === WATER_BASE ? 1 : 0)); // ingen veier (fergeruter) på vann
         classPlan = planClasses(baseCounts(base), n, budget, { roads: wantRoads, trees: wantTrees, buildings: wantBld });
         ({ cls, palette } = buildPalette(base, classPlan));
@@ -572,7 +578,7 @@ async function generate() {
         ({ cls, palette } = quantizeColors(rgb, n, share ? budget : budget - nSym));
       }
       if (wantRoads && (!classPlan || classPlan.has('roads'))) {
-        const rm = await fetchMosaic(src.roads, zc, lay, 'rgb', (p) => setStatus(`Henter veier (zoom ${zc}) …`, false, 0.85 + p * 0.05));
+        const rm = await fetchMosaic(src.roads, Math.min(zc, src.maxZoom), lay, 'rgb', (p) => setStatus(`Henter veier (zoom ${zc}) …`, false, 0.85 + p * 0.05));
         roadMask = roadMaskFrom(rm, lay, nx, ny, $('roadLevel').value);
       }
     } else {

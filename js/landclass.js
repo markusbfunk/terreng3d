@@ -7,7 +7,7 @@
 
 // Kartfarger (Kartverket N50/N100/N250, WMS wms.topo) → grunnklasse.
 const LEGEND = [
-  ['water', '#e0fefe'], ['water', '#7ed1fe'], ['water', '#00a6fe'],
+  ['water', '#e0fefe'], ['water', '#e0ffff'], ['water', '#7ed1fe'], ['water', '#00a6fe'],
   ['forest', '#d2e67c'], ['park', '#9bb93c'],
   ['farm', '#fef7a3'],
   ['open', '#fefee6'], ['open', '#ffffe6'], ['myr', '#bbe1f6'],
@@ -17,6 +17,11 @@ const LEGEND = [
 const BASE = ['water', 'forest', 'park', 'farm', 'open', 'myr', 'built', 'glacier'];
 const BASE_IDX = Object.fromEntries(BASE.map((k, i) => [k, i]));
 export const WATER_BASE = BASE_IDX.water;
+
+// I detaljerte bykart er «åpen fastmark» stort sett gressplener og knauser → regnes som grøntområde (park).
+export function openAsGreen(base) {
+  for (let i = 0; i < base.length; i++) if (base[i] === BASE_IDX.open || base[i] === BASE_IDX.myr) base[i] = BASE_IDX.park;
+}
 
 // Filamentklasser med navn og naturlige standardfarger.
 export const CLASSES = {
@@ -60,7 +65,7 @@ export function planClasses(counts, n, budget, want) {
     ['land', true],
     ['built', has('built')],
     ['glacier', has('glacier')],
-    ['forest', has('forest', 'park') && has('open', 'myr', 'farm', 'glacier')],
+    ['forest', has('forest', 'park') && has('open', 'myr')],
     ['roads', want.roads],
     ['trees', want.trees],
     ['buildings', want.buildings],
@@ -98,6 +103,49 @@ export function buildPalette(base, on) {
   return { cls, palette };
 }
 
+// Morfologisk åpning av bebyggelse: celler i bebyggelsesstriper smalere enn ca. 2r+1 celler (f.eks. veiarealer
+// i FKB) får den vanligste andre klassen i nabolaget.
+export function removeThinBuilt(base, nx, ny, r) {
+  const B = BASE_IDX.built;
+  const isB = (i, j) => i >= 0 && j >= 0 && i < nx && j < ny && base[j * nx + i] === B;
+  let m = new Uint8Array(nx * ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) m[j * nx + i] = base[j * nx + i] === B ? 1 : 0;
+  const morph = (src, erode) => {
+    const out = new Uint8Array(src.length);
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        let v = erode ? 1 : 0;
+        for (let dj = -r; dj <= r && v === (erode ? 1 : 0); dj++)
+          for (let di = -r; di <= r; di++) {
+            const ii = i + di, jj = j + dj;
+            const s = ii < 0 || jj < 0 || ii >= nx || jj >= ny ? (erode ? 1 : 0) : src[jj * nx + ii];
+            if (erode && !s) { v = 0; break; }
+            if (!erode && s) { v = 1; break; }
+          }
+        out[j * nx + i] = v;
+      }
+    return out;
+  };
+  const opened = morph(morph(m, true), false);
+  const cnt = new Uint16Array(BASE.length);
+  const R = r + 2;
+  for (let j = 0; j < ny; j++)
+    for (let i = 0; i < nx; i++) {
+      const k = j * nx + i;
+      if (!m[k] || opened[k]) continue;
+      cnt.fill(0);
+      for (let dj = -R; dj <= R; dj++)
+        for (let di = -R; di <= R; di++) {
+          const ii = i + di, jj = j + dj;
+          if (ii < 0 || jj < 0 || ii >= nx || jj >= ny || isB(ii, jj)) continue;
+          cnt[base[jj * nx + ii]]++;
+        }
+      let best = -1, bc = 0;
+      for (let c = 0; c < cnt.length; c++) if (cnt[c] > bc) { bc = cnt[c]; best = c; }
+      if (best >= 0) base[k] = best;
+    }
+}
+
 export const baseCounts = (base) => {
   const c = new Float64Array(BASE.length);
   for (let i = 0; i < base.length; i++) c[base[i]]++;
@@ -108,6 +156,16 @@ export const baseCounts = (base) => {
 export function finalizePalette(cls, palette) {
   const cnt = new Float64Array(palette.length);
   for (let i = 0; i < cls.length; i++) cnt[cls[i]]++;
+  // Klasser under 0,05 % av flaten slås inn i første klasse (land), så de ikke tar en filamentplass.
+  for (let c = 1; c < palette.length; c++) if (cnt[c] > 0 && cnt[c] < cls.length * 0.0005 && palette[c].id !== 'roads') {
+    for (let i = 0; i < cls.length; i++) if (cls[i] === c) cls[i] = 0;
+    cnt[0] += cnt[c]; cnt[c] = 0;
+  }
+  if (cnt[0] > 0 && cnt[0] < cls.length * 0.0005) {
+    let big = -1;
+    for (let c = 1; c < palette.length; c++) if (palette[c].id !== 'roads' && (big < 0 || cnt[c] > cnt[big])) big = c;
+    if (big > 0) { for (let i = 0; i < cls.length; i++) if (cls[i] === 0) cls[i] = big; cnt[big] += cnt[0]; cnt[0] = 0; }
+  }
   const keep = palette.map((_, i) => i).filter((i) => cnt[i] > 0);
   const map = new Uint8Array(palette.length);
   keep.forEach((o, i) => (map[o] = i));

@@ -21,6 +21,9 @@ export const COLOR_SOURCES = {
     // Bare N50/N100/N250-arealdekke (maxZoom 15 → målestokk ≥ 1:12 000). FKB/AR5 tegner veiarealer i
     // bebyggelsesfarge, så de er utelatt; veier legges på separat.
     url: 'https://wms.geonorge.no/skwms1/wms.topo?service=WMS&version=1.3.0&request=GetMap&styles=&crs=EPSG:3857&width=256&height=256&format=image/png&transparent=true&bbox={bbox3857}&layers=kd_arealdekkeflate,kd_vannflate,kd_elver',
+    // Små utsnitt (zoom 16–17): detaljert FKB-arealdekke (parker, plasser, havn) i tillegg.
+    urlDetail: 'https://wms.geonorge.no/skwms1/wms.topo?service=WMS&version=1.3.0&request=GetMap&styles=&crs=EPSG:3857&width=256&height=256&format=image/png&transparent=true&bbox={bbox3857}&layers=kd_arealdekkeflate,fkb_arealdekke,kd_vannflate,fkb_vann,kd_elver',
+    detailMaxZoom: 17,
     // Fargene klassifiseres til kjente arealklasser (js/landclass.js).
     classify: true,
     // Veier hentes som eget gjennomsiktig lag og legges på som én lys grå farge.

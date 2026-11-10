@@ -17,14 +17,20 @@ let jit = 0;
 const vec = (pts) => pts.map((p) => { jit = (jit + 0.6180339887) % 1; return new Vector2(p.x + jit * 1e-6, p.y + ((jit * 7.31) % 1) * 1e-6); });
 export const triangulate = (contour, holes) => ShapeUtils.triangulateShape(vec(contour), holes.map(vec));
 
-// Nærmeste større stedsnavn: by/tettsted hvis punktet ligger i et, ellers kommunen (eller fylket).
-export async function placeName(lat, lon) {
-  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}&zoom=12&accept-language=no`;
+// Stedsnavn tilpasset modellens størrelse (sizeM = lengste side i meter):
+// små modeller (≤ 3 km) → bydel/grend, mellomstore (≤ 25 km) → by/tettsted, store → kommune.
+// Uten treff på ønsket nivå brukes neste, større nivå.
+export async function placeName(lat, lon, sizeM = 10000) {
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}&zoom=16&accept-language=no`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`Stedsnavn: HTTP ${r.status}`);
   const j = await r.json();
   const a = j.address || {};
-  return a.city || a.town || a.village || a.municipality || a.county || a.state || a.country || j.name || '';
+  const small = [a.neighbourhood, a.quarter, a.suburb, a.city_district, a.hamlet, a.isolated_dwelling];
+  const mid = [a.village, a.town, a.city];
+  const big = [a.municipality, a.county, a.state, a.country];
+  const order = sizeM <= 3000 ? [...small, ...mid, ...big] : sizeM <= 25000 ? [...mid, ...big] : big;
+  return order.find(Boolean) || j.name || '';
 }
 
 const fmt = (v, d) => Math.abs(v).toFixed(d).replace('.', ',');
