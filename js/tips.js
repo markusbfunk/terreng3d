@@ -17,8 +17,8 @@ const TIPS = {
   colorSrc: 'Hvor fargene på toppen av modellen kommer fra. Kartverkets kart uten tekst gir rene flater i Norge; utenfor Norge brukes OpenTopoMap automatisk.',
   osmClasses: 'Hvilke arealtyper fra OpenStreetMap som får egen farge. Alt annet får grunnfargen.',
   seaWater: 'Områder på eller under 0 moh. farges som vann selv om OpenStreetMap ikke har et vannområde der.',
-  nColors: 'Hvor mange farger kartet reduseres til. Hver farge blir ett filament (AMS-spor). Veiene teller med hvis de er på. Trær og bygninger deler plass med en av fargene. Færre farger gir enklere print med mindre bytting.',
-  roadOpt: 'Legger veiene på som én egen mørkegrå farge (eget filament). Slå av for å la veiene få fargen til området rundt.',
+  nColors: 'Hvor mange farger kartet reduseres til. Hver farge blir ett filament (AMS-spor). Totalt antall filamenter, inkludert veier, trær og bygninger. Med Kartverket-kartet fordeles de etter prioritet: hav/vann, land, bebyggelse, snø/bre, skog vs. åpent land/fjell, veier, trær, bygninger, dyrket mark. Det som ikke får plass, slås sammen med nærmeste klasse.',
+  roadOpt: 'Legger veiene på helt til slutt som sammenhengende lys grå linjer (eget filament). Slå av for å utelate veiene.',
   smooth: 'Fjerner enkeltpiksler og fransete kanter mellom fargene. Flere passeringer gir rolige flater, men små detaljer kan forsvinne.',
   symTrees: 'Setter små kjegleformede trær i skogområder (fra OpenStreetMap). De blir en egen del som deler filament med den grønneste kartfargen; du kan velge en annen plass under Filamenter.',
   treeSpacing: 'Minste avstand mellom trærne i millimeter (aldri mindre enn diameteren).',
@@ -32,7 +32,7 @@ const TIPS = {
   showBldLbl: 'Vis eller skjul bygningene i modellen. Gjelder både forhåndsvisningen og eksporten.',
   genBtn: 'Henter data og bygger modellen. Store områder kan ta litt tid.',
   format: 'Bambu Studio-prosjekt har filamenter og byggeplater klare for H2D. Generisk 3MF passer PrusaSlicer, OrcaSlicer og andre.',
-  labelOn: 'Graverer stedsnavn og koordinatene til midtpunktet 0,6 mm inn i bunnen. Teksten speilvendes, så den leses riktig når modellen snus. Ved flere fliser får hver flis også navnet sitt.',
+  labelOn: 'Graverer stedsnavn og koordinatene til midtpunktet 0,6 mm inn i bunnen. Teksten speilvendes, så den leses riktig når modellen snus. Ved flere fliser får hver flis også navnet sitt. Drei 3D-visningen for å se undersiden.',
   labelName: 'Navnet som graveres. Fylles automatisk med nærmeste by eller tettsted, eller kommunen hvis området ikke ligger i et. Du kan skrive inn et eget.',
 };
 

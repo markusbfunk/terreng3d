@@ -28,10 +28,12 @@ Det valgte utsnittet lagres i nettadressen (`#c=lat,lon&s=bredde_m,høyde_m&r=gr
      Områder uten Kartverket-data (hav, utlandet) fylles fra AWS Terrain Tiles.
    - *AWS Terrain Tiles*: global dekning med cirka 10–30 m oppløsning.
 3. **Farger** (velg én kilde):
-   - *Kartverket arealdekke uten tekst* (standard, kun Norge): hentes fra Kartverkets WMS med bare
-     arealdekke, vann, elver og bygninger, slik at stedsnavn, høydekurver og skyggelegging ikke havner i
-     modellen. All bebyggelse (by, tettsted, industri, næring) får én felles farge, og veier kan legges på
-     som én mørkegrå farge. Utenfor Norge byttes det automatisk til OpenTopoMap.
+   - *Kartverket arealdekke uten tekst* (standard, kun Norge): N50/N100-arealdekke og vann fra Kartverkets
+     WMS (uten tekst, høydekurver og skygge). Hver kartfarge sorteres i en kjent klasse med navn og naturlig
+     farge. «Antall farger» er totalt antall filamenter, og klassene får plass i denne rekkefølgen:
+     hav/vann, land, bebyggelse, snø/bre, skog vs. åpent land/fjell, veier, trær, bygninger, dyrket mark.
+     Det som ikke får plass, slås sammen med nærmeste klasse. Veier legges på til slutt som sammenhengende
+     lys grå linjer (ikke over vann). Utenfor Norge byttes det automatisk til OpenTopoMap.
    - *Kartverket topo* (kun Norge) eller *OpenTopoMap* (global), begge med tekst: fargene i kartet
      reduseres med k-means (CIELAB) til N filamentfarger.
    - *Sentinel-2* (satellitt, 10 m): fargene reduseres på samme måte. Lisensen er CC BY-NC-SA, altså kun
@@ -67,6 +69,7 @@ Det valgte utsnittet lagres i nettadressen (`#c=lat,lon&s=bredde_m,høyde_m&r=gr
 | `js/export3mf.js` | 3MF-skriver (Bambu-prosjekt og generisk) |
 | `js/bambu_h2d_settings.json` | H2D-prosjektinnstillinger (fra Bambu Studios systemprofiler) |
 | `js/preview.js` | 3D-forhåndsvisning (three.js) |
+| `js/landclass.js` | Kartverket-klasser, prioritert filamentbudsjett og veimaske |
 | `js/label.js` | Stedsnavn og bokstavkonturer for tekst i bunnen |
 | `js/tips.js` | Forklarende tooltips på innstillingene |
 | `js/main.js` | Grensesnitt og arbeidsflyt |

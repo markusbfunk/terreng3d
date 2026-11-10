@@ -18,12 +18,14 @@ export const COLOR_SOURCES = {
     name: 'Kartverket arealdekke uten tekst (kun Norge)',
     type: 'raster',
     norwayOnly: true,
-    url: 'https://wms.geonorge.no/skwms1/wms.topo?service=WMS&version=1.3.0&request=GetMap&styles=&crs=EPSG:3857&width=256&height=256&format=image/png&transparent=true&bbox={bbox3857}&layers=kd_arealdekkeflate,fkb_arealdekke,kd_vannflate,fkb_vann,kd_elver,kd_bygninger,fkb_bygning',
-    // All bebyggelse (by, tettsted, industri/næring, rullebane) får samme farge før fargereduksjonen.
-    merge: [{ to: '#fad9bc', from: ['#fad9bc', '#f7be8c', '#d7d7d7', '#dcdcdc'] }],
-    // Veier hentes som eget gjennomsiktig lag og legges på som én mørkegrå farge.
-    roads: 'https://wms.geonorge.no/skwms1/wms.topo?service=WMS&version=1.3.0&request=GetMap&styles=&crs=EPSG:3857&width=256&height=256&format=image/png&transparent=true&bbox={bbox3857}&layers=kd_veger,veg,veg_bru',
-    maxZoom: 18,
+    // Bare N50/N100/N250-arealdekke (maxZoom 15 → målestokk ≥ 1:12 000). FKB/AR5 tegner veiarealer i
+    // bebyggelsesfarge, så de er utelatt; veier legges på separat.
+    url: 'https://wms.geonorge.no/skwms1/wms.topo?service=WMS&version=1.3.0&request=GetMap&styles=&crs=EPSG:3857&width=256&height=256&format=image/png&transparent=true&bbox={bbox3857}&layers=kd_arealdekkeflate,kd_vannflate,kd_elver',
+    // Fargene klassifiseres til kjente arealklasser (js/landclass.js).
+    classify: true,
+    // Veier hentes som eget gjennomsiktig lag og legges på som én lys grå farge.
+    roads: 'https://wms.geonorge.no/skwms1/wms.topo?service=WMS&version=1.3.0&request=GetMap&styles=&crs=EPSG:3857&width=256&height=256&format=image/png&transparent=true&bbox={bbox3857}&layers=kd_veger',
+    maxZoom: 15,
     attribution: 'Kart: © Kartverket (CC BY 4.0)',
   },
   topo_no: {

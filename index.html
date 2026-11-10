@@ -66,9 +66,9 @@
     </div>
     <div id="rasterOpts" hidden>
       <label>Antall farger (filamenter)<input id="nColors" type="number" min="2" max="16" value="6"></label>
-      <label class="check" id="roadOpt"><input id="roads" type="checkbox" checked> Veier i mørk grå</label>
+      <label class="check" id="roadOpt"><input id="roads" type="checkbox" checked> Veier (lys grå)</label>
     </div>
-    <label>Støyfjerning (passeringer)<input id="smooth" type="number" min="0" max="6" value="0"></label>
+    <label>Støyfjerning (passeringer)<input id="smooth" type="number" min="0" max="6" value="2"></label>
   </section>
 
   <section>
@@ -78,14 +78,14 @@
       <label>Avstand (mm)<input id="treeSpacing" type="number" min="0.5" max="20" step="0.1" value="1"></label>
       <label>Høyde (mm)<input id="treeHeight" type="number" min="1" max="15" step="0.5" value="4"></label>
       <label>Diameter (mm)<input id="treeDiam" type="number" min="0.8" max="8" step="0.1" value="1.2"></label>
-      <label>Tetthet (0–1)<input id="treeFill" type="number" min="0.05" max="1" step="0.05" value="0.6"></label>
+      <label>Tetthet (0–1)<input id="treeFill" type="number" min="0.05" max="1" step="0.05" value="0.25"></label>
     </div>
     <label class="check"><input id="symBuildings" type="checkbox" checked> Bygninger</label>
     <div class="grid2" id="bldOpts">
-      <label>Minste størrelse (mm)<input id="bldMin" type="number" min="0.8" max="10" step="0.1" value="1.6"></label>
+      <label>Minste størrelse (mm)<input id="bldMin" type="number" min="0.8" max="10" step="0.1" value="1.2"></label>
       <label>Minste høyde (mm)<input id="bldMinH" type="number" min="0.4" max="10" step="0.2" value="1.2"></label>
     </div>
-    <p class="hint">Symbolene blir egne deler og deler filament med en av kartfargene (kan endres under Filamenter). Små bygninger forstørres til minstestørrelsen og tynnes ut der det er tett.</p>
+    <p class="hint">Symbolene blir egne deler med egne, naturlige farger når det er nok filamenter; ellers deler de filament med skog/land og bebyggelse. Små bygninger forstørres til minstestørrelsen og tynnes ut der det er tett.</p>
   </section>
 
   <section>

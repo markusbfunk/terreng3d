@@ -10,6 +10,7 @@ import { placeTrees, placeBuildings, buildSymbolMesh } from './symbols.js';
 import { build3mf } from './export3mf.js';
 import { Preview } from './preview.js';
 import { loadFont, labelShapes, triangulate, placeName, coordText } from './label.js';
+import { CLASSES, SYMBOL_COLORS, WATER_BASE, classifyKartverket, planClasses, buildPalette, baseCounts, finalizePalette, roadMaskFrom } from './landclass.js';
 
 const $ = (id) => document.getElementById(id);
 const num = (id) => parseFloat($(id).value);
@@ -347,7 +348,7 @@ function onSourceChange() {
   $('osmOpts').hidden = t !== 'osm';
   $('rasterOpts').hidden = t !== 'raster';
   $('roadOpt').hidden = !COLOR_SOURCES[$('colorSrc').value].roads;
-  $('smooth').value = t === 'raster' ? 1 : 0;
+  $('smooth').value = t === 'raster' ? 2 : 0;
   updateCredits();
 }
 $('colorSrc').addEventListener('change', onSourceChange);
@@ -378,19 +379,18 @@ function setBusy(b) {
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 // ---------------- Generering ----------------
-const ROAD_COLOR = '#3a3a3a';
-
-// Velger hvilken kartfarge (filamentplass) trær og bygninger skal dele:
-// trær → den mest «skoggrønne» fargen, bygninger → veifargen hvis den finnes, ellers den mørkeste fargen.
+// Når trær/bygninger ikke får eget filament: trær deler med skog/land (den grønneste fargen),
+// bygninger med bebyggelse (ellers den mørkeste fargen).
 function shareSlot(palette, key) {
   const rgb = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
   const lum = (h) => { const [r, g, b] = rgb(h); return 0.299 * r + 0.587 * g + 0.114 * b; };
   let best;
   if (key === 'trees') {
+    best = palette.find((p) => p.id === 'forest') || palette.find((p) => p.id === 'land');
     const score = (h) => { const [r, g, b] = rgb(h); return (g - Math.max(r, b)) * 2 - lum(h) * 0.5; };
-    best = palette.reduce((a, p) => (score(p.color) > score(a.color) ? p : a));
+    best ||= palette.reduce((a, p) => (score(p.color) > score(a.color) ? p : a));
   } else {
-    best = palette.find((p) => p.id === 'roads') || palette.reduce((a, p) => (lum(p.color) < lum(a.color) ? p : a));
+    best = palette.find((p) => p.id === 'built') || palette.reduce((a, p) => (lum(p.color) < lum(a.color) ? p : a));
   }
   return { slot: best.slot, color: best.color };
 }
@@ -442,6 +442,17 @@ async function tileEngrave(M, t) {
   return res ? { shapes: res.shapes, box: res.box, depth, triangulate } : null;
 }
 
+// Beregner tekst for alle fliser (brukes av forhåndsvisning og eksport).
+async function updateEngraves() {
+  const M = state.model;
+  state.engraves = new Map();
+  if (!M || !$('labelOn').checked) return;
+  for (const t of M.tiles) {
+    try { state.engraves.set(t.name, await tileEngrave(M, t)); } catch (err) { console.warn('Tekst i bunnen:', err); }
+  }
+}
+for (const id of ['labelOn', 'labelName', 'base']) $(id).addEventListener('change', async () => { if (state.model) { await updateEngraves(); renderPreview(false); } });
+
 async function generate() {
   const lay = layout();
   if (!lay) return setStatus('Velg et område i kartet først.', true);
@@ -485,7 +496,9 @@ async function generate() {
     }
 
     // 3) Farger
-    let cls, palette, keepFirst = false, roadMask = null;
+    const budget = Math.max(2, Math.round(num('nColors')) || 6);
+    const wantRoads = !!(src.roads && $('roads').checked);
+    let cls, palette, keepFirst = false, roadMask = null, onWater = null, ownSym = { trees: true, buildings: true }, classPlan = null;
     if (src.type === 'osm') {
       if (enabled.length) {
         const data = osmData;
@@ -506,23 +519,39 @@ async function generate() {
     } else if (src.type === 'raster') {
       const zc = chooseZoom(lay, sampleM / 1.5, src.maxZoom, 500);
       const cm = await fetchMosaic(src.url, zc, lay, 'rgb', (p) => setStatus(`Henter fargekart (zoom ${zc}) …`, false, 0.5 + p * 0.3));
-      setStatus('Reduserer farger …', false, 0.85);
+      setStatus('Fordeler farger …', false, 0.85);
       await tick();
-      const rgb = new Uint8Array(nx * ny * 3);
+      const n = nx * ny;
+      const rgb = new Uint8Array(n * 3), alpha = new Float32Array(n);
       for (let j = 0; j < ny; j++)
         for (let i = 0; i < nx; i++) {
           const [x, y] = lay.gridXY(i + 0.5, j + 0.5);
           cm.rgb(x, y, rgb, (j * nx + i) * 3);
+          alpha[j * nx + i] = cm.alpha(x, y);
         }
-      if (src.merge) mergeColors(rgb, src.merge);
-      // Veiene er én av filamentfargene, så kartet reduseres til én farge mindre.
-      const wantRoads = !!(src.roads && $('roads').checked);
-      ({ cls, palette } = quantizeColors(rgb, nx * ny, Math.max(1, (Math.round(num('nColors')) || 6) - (wantRoads ? 1 : 0))));
-      if (wantRoads) {
-        const rm = await fetchMosaic(src.roads, zc, lay, 'rgb', (p) => setStatus(`Henter veier (zoom ${zc}) …`, false, 0.85 + p * 0.05));
-        roadMask = new Uint8Array(nx * ny);
+      if (src.classify) {
+        // Kjente kartklasser med navn og naturlige farger; slås sammen etter prioritet ved få filamenter.
+        const sea = new Uint8Array(n);
         for (let j = 0; j < ny; j++)
-          for (let i = 0; i < nx; i++) roadMask[j * nx + i] = rm.alpha(...lay.gridXY(i + 0.5, j + 0.5)) > 0.4 ? 1 : 0;
+          for (let i = 0; i < nx; i++) {
+            const k = j * NX + i;
+            sea[j * nx + i] = Math.max(elevM[k], elevM[k + 1], elevM[k + NX], elevM[k + NX + 1]) <= 0 ? 1 : 0;
+          }
+        const base = classifyKartverket(rgb, alpha, sea, n);
+        onWater = base.map((b) => (b === WATER_BASE ? 1 : 0)); // ingen veier (fergeruter) på vann
+        classPlan = planClasses(baseCounts(base), n, budget, { roads: wantRoads, trees: wantTrees, buildings: wantBld });
+        ({ cls, palette } = buildPalette(base, classPlan));
+        ownSym = { trees: classPlan.has('trees'), buildings: classPlan.has('buildings') };
+      } else {
+        // Andre kart: k-means. Trær/bygninger får egne filamenter hvis det blir minst tre kartfarger igjen.
+        const nSym = (wantTrees ? 1 : 0) + (wantBld ? 1 : 0);
+        const share = budget - nSym < 3;
+        ownSym = { trees: !share, buildings: !share };
+        ({ cls, palette } = quantizeColors(rgb, n, share ? budget : budget - nSym));
+      }
+      if (wantRoads && (!classPlan || classPlan.has('roads'))) {
+        const rm = await fetchMosaic(src.roads, zc, lay, 'rgb', (p) => setStatus(`Henter veier (zoom ${zc}) …`, false, 0.85 + p * 0.05));
+        roadMask = roadMaskFrom(rm, lay, nx, ny);
       }
     } else {
       cls = new Uint8Array(nx * ny);
@@ -534,37 +563,46 @@ async function generate() {
       await tick();
       majorityFilter(cls, nx, ny, passes, palette.length);
     }
-    // Veier legges på etter støyfjerningen, så smale veier ikke forsvinner.
+    // Veier legges på helt til slutt (etter støyfjerningen), så linjene blir hele.
     if (roadMask && roadMask.some((v) => v)) {
       const ri = palette.length;
-      palette.push({ name: 'Veier', color: ROAD_COLOR, id: 'roads' });
-      for (let i = 0; i < cls.length; i++) if (roadMask[i]) cls[i] = ri;
+      palette.push({ name: CLASSES.roads.name, color: CLASSES.roads.color, id: 'roads' });
+      for (let i = 0; i < cls.length; i++) if (roadMask[i] && !(onWater && onWater[i])) cls[i] = ri;
     }
-    palette = compactPalette(cls, palette, keepFirst);
-    if (src.type === 'raster') { let n = 0; palette.forEach((p) => { if (p.id !== 'roads') p.name = `Farge ${++n}`; }); }
+    if (src.classify) palette = finalizePalette(cls, palette);
+    else {
+      palette = compactPalette(cls, palette, keepFirst);
+      if (src.type === 'raster') { let k = 0; palette.forEach((p) => { if (p.id !== 'roads') p.name = `Farge ${++k}`; }); }
+    }
 
     const M = { ...lay, elevM, cls, palette, srcKey, z: null, used, symbols: {}, symPalette: [] };
     computeHeights(M);
 
-    // 4) Symboler
+    // 4) Symboler – egne filamenter med naturlige farger når budsjettet tillater det, ellers deler de med en kartfarge.
     if (osmData && (wantTrees || wantBld)) {
       setStatus('Plasserer symboler …', false, 0.95);
       await tick();
+      let nextSlot = Math.max(...palette.map((p) => p.slot)) + 1;
+      const symEntry = (key, count) => {
+        const own = ownSym[key];
+        const base = own ? { ...SYMBOL_COLORS[key], slot: Math.min(16, nextSlot++) } : { name: SYMBOL_COLORS[key].name, ...shareSlot(palette, key) };
+        return { key, ...base, name: `${base.name} (${count})${own ? '' : ' – deler filament'}`, pct: null };
+      };
       let bld = null;
       if (wantBld) {
-        bld = placeBuildings(M, osmData.elements || [], { minSize: num('bldMin') || 1.6, minHeight: num('bldMinH') || 1.2, exag: num('exag') || 1, max: 20000 });
+        bld = placeBuildings(M, osmData.elements || [], { minSize: num('bldMin') || 1.2, minHeight: num('bldMinH') || 1.2, exag: num('exag') || 1, max: 20000 });
         if (bld.items.length) {
           M.symbols.buildings = bld.items;
-          M.symPalette.push({ key: 'buildings', name: `Bygninger (${bld.items.length})`, ...shareSlot(palette, 'buildings'), pct: null });
+          M.symPalette.push(symEntry('buildings', bld.items.length));
         }
       }
       if (wantTrees) {
         const mask = rasterizeOsm(osmData, lay, [forestCls], nx, ny);
-        const r = (num('treeDiam') || 1.8) / 2;
-        const trees = placeTrees(M, mask, { spacing: Math.max(2 * r, num('treeSpacing') || 3), fill: num('treeFill') || 0.6, radius: r, height: num('treeHeight') || 3, max: 40000 }, bld);
+        const r = (num('treeDiam') || 1.2) / 2;
+        const trees = placeTrees(M, mask, { spacing: Math.max(2 * r, num('treeSpacing') || 1), fill: num('treeFill') || 0.25, radius: r, height: num('treeHeight') || 4, max: 40000 }, bld);
         if (trees.length) {
           M.symbols.trees = trees;
-          M.symPalette.push({ key: 'trees', name: `Trær (${trees.length})`, ...shareSlot(palette, 'trees'), pct: null });
+          M.symPalette.push(symEntry('trees', trees.length));
         }
       }
     }
@@ -582,6 +620,7 @@ async function generate() {
     $('showTreesLbl').hidden = !M.symbols.trees;
     $('showBldLbl').hidden = !M.symbols.buildings;
     showTab('3d');
+    await updateEngraves();
     renderPreview(true);
   } catch (err) {
     console.error(err);
@@ -670,7 +709,7 @@ function renderPreview(refit) {
   const tiles = [];
   for (const t of M.tiles) {
     const offset = tileOffset(M, t, gap);
-    tiles.push({ ...tileMesh(M, t, step), offset });
+    tiles.push({ ...tileMesh(M, t, step, state.engraves?.get(t.name)), offset });
     for (const p of symbolParts(M, t)) tiles.push({ ...p.mesh, offset, symKey: p.key });
   }
   state.preview.setTiles(tiles, M.palette.map((p) => p.color), wallColor(M), refit, symColors(M));
@@ -757,8 +796,9 @@ async function exportTiles(list, filename) {
   try {
     setStatus('Bygger mesh …', false, 0);
     await tick();
-    const engraves = [];
-    for (const t of list) engraves.push(await tileEngrave(M, t).catch((e) => { console.warn(e); return null; }));
+    await updateEngraves();
+    const engraves = list.map((t) => state.engraves.get(t.name) || null);
+    const nText = engraves.filter(Boolean).length;
     const objects = list.map((t, k) => ({
       name: t.name,
       mesh: tileMesh(M, t, 1, engraves[k]),
@@ -783,7 +823,8 @@ async function exportTiles(list, filename) {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-    setStatus(`Lagret ${filename} (${(blob.size / 1e6).toFixed(1)} MB, ${(tris / 1e6).toFixed(2)} mill. trekanter).`);
+    const txt = $("labelOn").checked ? (nText ? ` Tekst «${$("labelName").value.trim()}» gravert i undersiden av ${nText} av ${list.length} fliser.` : " Teksten fikk ikke plass i undersiden.") : "";
+    setStatus(`Lagret ${filename} (${(blob.size / 1e6).toFixed(1)} MB, ${(tris / 1e6).toFixed(2)} mill. trekanter).${txt}`);
   } catch (err) {
     console.error(err);
     setStatus('Eksport feilet: ' + err.message, true);
